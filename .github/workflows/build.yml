@@ -1,0 +1,86 @@
+name: Build bond yield monitor
+
+on:
+  schedule:
+    # 06:40 and 16:40 UTC on weekdays. The 06:40 run catches the BoE GLC
+    # current-month file (published ~08:00 London) from the prior session; the
+    # 16:40 run picks up the Bundesbank same-day curve before the US close.
+    - cron: "40 6 * * 1-5"
+    - cron: "40 16 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      UK_BASIS: spot          # BoE IADB par endpoint blocks datacentre IPs
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install openpyxl
+
+      # Cache the 39MB BoE GLC archive; it only changes monthly.
+      - uses: actions/cache@v4
+        with:
+          path: glcnominalddata.zip
+          key: glc-archive-${{ github.run_id }}
+          restore-keys: glc-archive-
+
+      - name: Fetch curves
+        run: python3 fetch_rates.py
+        # exits non-zero if any market drops out, so a broken build fails loudly
+        # rather than publishing a page with a market silently missing
+
+      - name: Write and reconcile commentary
+        run: python3 write_commentary.py
+
+      - name: Build page
+        run: python3 build_dashboard.py
+
+      - name: Sanity-check the output
+        run: |
+          python3 - <<'PY'
+          import json, sys, datetime as dt
+          d = json.load(open("rates.json"))
+          codes = {m["code"] for m in d["markets"]}
+          missing = {"US", "UK", "DE", "JP"} - codes
+          assert not missing, f"markets missing: {missing}"
+          today = dt.date.today()
+          for m in d["markets"]:
+              lag = (today - dt.date.fromisoformat(m["asof"])).days
+              assert lag <= 5, f"{m['code']} stale: as at {m['asof']}"
+          cm = d.get("commentary") or {}
+          print("commentary:", "suppressed" if cm.get("suppressed") else "published")
+          PY
+
+      - name: Stage site
+        run: |
+          mkdir -p _site
+          cp bond_yield_monitor.html _site/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,42 @@
+{
+  "US": {
+    "name": "Fed funds target",
+    "rate": 3.625,
+    "display": "3.50–3.75%",
+    "asof": "2026-07-29",
+    "note": "Held 29 Jul 2026; three dissents preferred a 25bp hike (Hammack, Kashkari, Logan).",
+    "next": "2026-09-16",
+    "cpi": 2.9,
+    "cpi_label": "US CPI y/y"
+  },
+  "UK": {
+    "name": "Bank Rate",
+    "rate": 3.75,
+    "display": "3.75%",
+    "asof": "2026-07-30",
+    "note": "Held 30 Jul 2026. CPI 2.6%, expected to rise on energy.",
+    "next": "2026-09-17",
+    "cpi": 2.6,
+    "cpi_label": "UK CPI y/y"
+  },
+  "DE": {
+    "name": "ECB deposit facility",
+    "rate": 2.25,
+    "display": "2.25%",
+    "asof": "2026-06-17",
+    "note": "Deposit facility 2.25%, MRO 2.40%, effective 17 Jun 2026.",
+    "next": "",
+    "cpi": null,
+    "cpi_label": "Euro area HICP y/y"
+  },
+  "JP": {
+    "name": "BoJ policy rate",
+    "rate": 1.0,
+    "display": "1.00%",
+    "asof": "2026-07-31",
+    "note": "Raised to 1.00% in Jun 2026; held 31 Jul on an 8–1 vote, one member favouring 1.25%.",
+    "next": "",
+    "cpi": null,
+    "cpi_label": "Japan core CPI y/y"
+  }
+}

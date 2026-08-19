@@ -10,11 +10,13 @@ Two jobs, deliberately separate:
 
   check   - reconcile whatever is in commentary.json against rates.json,
             whether this script wrote it or a human did. Any figure in the prose
-            that cannot be found in today's data, a stale `asof`, or directional
-            language that contradicts the move, suppresses the box.
+            that cannot be found in today's data, or directional language the
+            data contradicts, withholds the section that carries it; a missing
+            or out-of-window `asof` withholds the whole box.
 
-Suppression is not silent: the page shows a one-line notice in place of the
-commentary, and the run logs the reasons.
+Nothing is withheld silently: the page shows what was dropped and why, the run
+logs the reasons, and under GitHub Actions the outcome is annotated and exposed
+as a step output so a wordless page cannot ship under a green tick.
 
   python3 write_commentary.py            # write, then check
   python3 write_commentary.py --check    # check only (leaves the file alone)
@@ -128,9 +130,14 @@ class Curve:
             return None
         return ser[-1] - ser[j]
 
-    def latest_common_date(self):
+    def data_window(self):
+        """(common, latest) — the date every market has data through, and the
+        freshest date any market has. They differ whenever one publisher lags:
+        the BoE GLC file routinely lands a session behind the others, so a read
+        dated to either end of that window is legitimately current.
+        """
         days = [m["asof"] for m in self.p["markets"] if m.get("asof")]
-        return max(days) if days else None
+        return (min(days), max(days)) if days else (None, None)
 
 
 # --------------------------------------------------------------- the writing
@@ -332,7 +339,7 @@ def write_gold(cv):
 
 def compose(payload):
     cv = Curve(payload)
-    asof = cv.latest_common_date()
+    _, asof = cv.data_window()
     sections = [s for s in (write_us(cv), write_uk(cv), write_gold(cv)) if s]
     if not sections:
         return {}
@@ -379,10 +386,65 @@ NUM_PCT = re.compile(r"(-?\d+(?:\.\d+)?)\s*%")
 NUM_BP = re.compile(r"(-?\d+(?:\.\d+)?)\s*bp\b", re.I)
 NUM_USD = re.compile(r"\$\s*([\d,]+(?:\.\d+)?)")
 
+# Horizons the prose may quote a direction over. A directional word is only
+# wrong if the data contradicts it at *every* one of them: a single US paragraph
+# describes 2s30s over the session, five days and a month, and those three
+# routinely point different ways.
+DIR_HORIZONS = ("1d", "5d", "1m", "3m")
+DIR_MIN_BP = 1.5     # below this a move is noise, not a direction
+
 STEEPER = re.compile(r"\bsteep(er|ening)\b", re.I)
 FLATTER = re.compile(r"\bflatt(er|ening)\b", re.I)
 SOLDOFF = re.compile(r"\b(sold off|selloff|sell-off|rose|higher in yield)\b", re.I)
 RALLIED = re.compile(r"\b(rallied|rally|fell|lower in yield)\b", re.I)
+
+
+def key_pair(m):
+    """The tenor pair the section is written about.
+
+    Markets declare it as `key` (US 2s30s, UK 5s30s); the first and last tenors
+    are a poor stand-in, since `tenors[0]` is the 3M bill for the US and moves
+    with the policy floor rather than with the curve the prose describes.
+    """
+    pair = m.get("key") or []
+    if len(pair) == 2 and all(t in m["tenors"] for t in pair):
+        return pair[0], pair[1]
+    return m["tenors"][0], m["tenors"][-1]
+
+
+def _pair_label(short, long_):
+    if short.endswith("Y") and long_.endswith("Y"):
+        return f"{short[:-1]}s{long_[:-1]}s"
+    return f"{short}/{long_}"
+
+
+def _moves(values):
+    return [v for v in values if v is not None and abs(v) >= DIR_MIN_BP]
+
+
+def directional_reasons(cv, code, text, title):
+    """Directional language checked against the pair and horizons it describes."""
+    m = cv.m.get(code)
+    if not m or len(m["tenors"]) < 2:
+        return []
+    short, long_ = key_pair(m)
+    pair = _pair_label(short, long_)
+    reasons = []
+
+    sps = _moves([cv.spread_change_bp(code, short, long_, h) for h in DIR_HORIZONS])
+    if sps:
+        if STEEPER.search(text) and all(x < 0 for x in sps):
+            reasons.append(f"{title}: says steeper, {pair} flattened over every horizon")
+        if FLATTER.search(text) and all(x > 0 for x in sps):
+            reasons.append(f"{title}: says flatter, {pair} steepened over every horizon")
+
+    ds = _moves([cv.change_bp(code, long_, h) for h in DIR_HORIZONS])
+    if ds:
+        if SOLDOFF.search(text) and all(x < 0 for x in ds) and not RALLIED.search(text):
+            reasons.append(f"{title}: says selloff, the {long_} fell over every horizon")
+        if RALLIED.search(text) and all(x > 0 for x in ds) and not SOLDOFF.search(text):
+            reasons.append(f"{title}: says rally, the {long_} rose over every horizon")
+    return reasons
 
 
 def candidate_values(cv, code):
@@ -450,59 +512,95 @@ def candidate_values(cv, code):
     return pcts, bps
 
 
-def check(payload, cm):
-    """Return (ok, [reasons]). Any reason at all suppresses the box."""
-    reasons = []
+def review(payload, cm):
+    """Reconcile commentary against the data.
+
+    Returns (global_reasons, section_reasons). A global reason withholds the
+    whole box — there is no commentary, or it is dated outside the data window.
+    section_reasons is keyed by section index, so a figure the US section cannot
+    justify no longer takes the gilt and gold reads down with it.
+    """
     if not cm or not cm.get("headline"):
-        return False, ["no commentary written"]
+        return ["no commentary written"], {}
 
     cv = Curve(payload)
-    latest = cv.latest_common_date()
+    common, latest = cv.data_window()
+    globals_ = []
     asof = cm.get("asof")
     if not asof:
-        reasons.append("commentary has no asof date")
-    elif latest and asof != latest:
-        stale = (dt.date.fromisoformat(latest) - dt.date.fromisoformat(asof)).days
-        if stale > MAX_STALE_DAYS:
-            reasons.append(f"commentary dated {asof}, data as at {latest}")
+        globals_.append("commentary has no asof date")
+    elif common and latest:
+        if asof > latest:
+            globals_.append(f"commentary dated {asof}, ahead of the data ({latest})")
+        else:
+            stale = (dt.date.fromisoformat(common)
+                     - dt.date.fromisoformat(asof)).days
+            if stale > MAX_STALE_DAYS:
+                globals_.append(f"commentary dated {asof}, all markets current "
+                                f"through {common}")
 
-    for sec in cm.get("sections", []):
+    per_section = {}
+    for idx, sec in enumerate(cm.get("sections", [])):
         code = sec.get("key", "")
+        title = sec.get("title", code)
         pcts, bps = candidate_values(cv, code)
-        text = " ".join(sec.get("body", []) if isinstance(sec.get("body"), list)
-                        else [str(sec.get("body", ""))])
+        body = sec.get("body", [])
+        text = " ".join(body if isinstance(body, list) else [str(body)])
         text = re.sub(r"<[^>]+>", "", text)
 
+        reasons = []
         for raw in NUM_PCT.findall(text):
             val, tol = float(raw), _tol(raw, TOL_PCT)
             if not any(abs(val - c) <= tol for c in pcts):
-                reasons.append(f"{sec.get('title', code)}: '{raw}%' not in today's data")
+                reasons.append(f"{title}: '{raw}%' not in today's data")
         for raw in NUM_BP.findall(text):
             val, tol = abs(float(raw)), _tol(raw, TOL_BP)
             if not any(abs(val - abs(c)) <= tol for c in bps):
-                reasons.append(f"{sec.get('title', code)}: '{raw}bp' not in today's data")
+                reasons.append(f"{title}: '{raw}bp' not in today's data")
+        reasons += directional_reasons(cv, code, text, title)
+        if reasons:
+            per_section[idx] = reasons
 
-        # directional language must agree with the actual move
-        m = cv.m.get(code)
-        if m and len(m["tenors"]) >= 2:
-            short, long_ = m["tenors"][0], m["tenors"][-1]
-            sp = cv.spread_change_bp(code, short, long_, "1d")
-            d1 = cv.change_bp(code, long_, "1d")
-            if sp is not None and abs(sp) >= 1.5:
-                if STEEPER.search(text) and sp < 0:
-                    reasons.append(f"{sec.get('title', code)}: says steeper, curve flattened")
-                if FLATTER.search(text) and sp > 0:
-                    reasons.append(f"{sec.get('title', code)}: says flatter, curve steepened")
-            if d1 is not None and abs(d1) >= 1.5:
-                if SOLDOFF.search(text) and d1 < 0 and not RALLIED.search(text):
-                    reasons.append(f"{sec.get('title', code)}: says selloff, yields fell")
-                if RALLIED.search(text) and d1 > 0 and not SOLDOFF.search(text):
-                    reasons.append(f"{sec.get('title', code)}: says rally, yields rose")
+    return globals_, per_section
 
+
+def flatten(globals_, per_section):
+    return list(globals_) + [r for i in sorted(per_section) for r in per_section[i]]
+
+
+def check(payload, cm):
+    """(ok, [reasons]) across the whole document — what `--check` reports."""
+    globals_, per_section = review(payload, cm)
+    reasons = flatten(globals_, per_section)
     return (not reasons), reasons
 
 
 # --------------------------------------------------------------------- entry
+
+
+def report_to_ci(status, reasons):
+    """Put the outcome where an unattended run will be seen.
+
+    An annotation on the run, a line in the job summary, and a step output the
+    workflow turns into a failed job. Without this a suppressed read ships a
+    wordless page under a green tick.
+    """
+    if not os.environ.get("GITHUB_ACTIONS"):
+        return
+    if status != "published":
+        title = ("Commentary withheld" if status == "suppressed"
+                 else "Commentary partially withheld")
+        print(f"::warning title={title}::{' · '.join(reasons) or 'no detail'}")
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as f:
+            f.write(f"### Commentary: {status}\n\n")
+            f.writelines(f"- {r}\n" for r in reasons)
+            f.write("\n")
+    out = os.environ.get("GITHUB_OUTPUT")
+    if out:
+        with open(out, "a", encoding="utf-8") as f:
+            f.write(f"status={status}\n")
 
 
 def main():
@@ -519,21 +617,40 @@ def main():
             log("nothing to write — insufficient data")
     cm = json.load(open(COMMENTARY, encoding="utf-8")) if os.path.exists(COMMENTARY) else {}
 
-    ok, reasons = check(payload, cm)
-    if ok:
-        cm["status"] = "ok"
-        log("reconciled against the data — publishing")
-    else:
+    globals_, per_section = review(payload, cm)
+    reasons = flatten(globals_, per_section)
+    sections = cm.get("sections", [])
+    kept = [sec for i, sec in enumerate(sections) if i not in per_section]
+    withheld = [{"title": sections[i].get("title", sections[i].get("key", "")),
+                 "reasons": per_section[i]} for i in sorted(per_section)]
+
+    if globals_ or (sections and not kept):
+        status = "suppressed"
         for r in reasons:
             log(f"SUPPRESSED: {r}")
         cm = {"suppressed": True, "reasons": reasons,
               "asof": cm.get("asof"), "author": cm.get("author")}
+    elif withheld:
+        status = "partial"
+        for r in reasons:
+            log(f"WITHHELD: {r}")
+        log(f"publishing {len(kept)} of {len(sections)} sections")
+        cm["sections"] = kept
+        cm["withheld"] = withheld
+        cm["status"] = "partial"
+    else:
+        status = "published"
+        cm["status"] = "ok"
+        log("reconciled against the data — publishing")
 
+    report_to_ci(status, reasons)
     payload["commentary"] = cm
     with open(RATES, "w", encoding="utf-8") as f:
         json.dump(payload, f, separators=(",", ":"))
     log("rates.json updated")
-    return 0
+    # The data still publishes: a read that cannot be reconciled is a reason to
+    # withhold prose, not to withhold the curves. STRICT is for local runs.
+    return 1 if status != "published" and os.environ.get("COMMENTARY_STRICT") else 0
 
 
 if __name__ == "__main__":

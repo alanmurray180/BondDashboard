@@ -945,6 +945,11 @@ function renderBrief(){
     lanes.appendChild(lane);
   });
   host.appendChild(lanes);
+  if((cm.withheld||[]).length){
+    host.appendChild(el('p','note','Withheld — '+cm.withheld
+      .flatMap(w=>w.reasons||[]).join(' · ')
+      +'. The rest of the read reconciled against the data.'));
+  }
   if(cm.footnote) host.appendChild(el('p','note',cm.footnote));
 }
 

@@ -49,20 +49,49 @@ figure in the prose is computed from the same series the grids draw — auto-wri
 text cannot drift from the data by construction.
 
 It then reconciles whatever is in `commentary.json` — its own output or something
-written by hand — and **suppresses the box entirely** if any of these fail:
+written by hand — against these checks:
 
-| Check | Catches |
-|---|---|
-| `asof` equals the latest data date | yesterday's read served against today's curve |
-| every `x.xx%` figure matches a level, spread or policy rate in today's data | levels carried forward |
-| every `NNbp` figure matches a change over 1d/5d/1m/3m/6m/1y, a spread, or a cross-market gap | stale move figures |
-| steeper/flatter language agrees with the sign of the 1d spread change | direction reversed since writing |
-| selloff/rally language agrees with the sign of the 1d long-end change | ditto |
+| Check | Scope | Catches |
+|---|---|---|
+| `asof` falls inside the data window | whole box | yesterday's read served against today's curve |
+| every `x.xx%` figure matches a level, spread or policy rate in today's data | section | levels carried forward |
+| every `NNbp` figure matches a change over 1d/5d/1m/3m/6m/1y, a spread, or a cross-market gap | section | stale move figures |
+| steeper/flatter language agrees with the market's `key` pair over at least one of 1d/5d/1m/3m | section | direction reversed since writing |
+| selloff/rally language agrees with the long end over at least one of those horizons | section | ditto |
 
 Tolerance follows the precision quoted: `10.3%` is allowed half of its last
-decimal place, `4.19%` far less. Suppression is visible — the page shows a
-"Commentary withheld" notice with the reasons in place of the read, rather than
-the box quietly vanishing.
+decimal place, `4.19%` far less.
+
+Three things about how that gate is drawn, each of them load-bearing:
+
+**Directional language is checked against the pair and the horizons the prose
+actually uses.** A section says "2s30s is 3bp steeper over five sessions and 6bp
+steeper over the month" in the same paragraph that calls the session a bear
+steepening — three claims over three horizons. Testing all of them against one
+number is how the gate used to withhold correct reads: `tenors[0]` is the 3M
+bill for the US, which tracks the policy floor rather than the curve the prose
+describes, and a day and a month routinely point opposite ways. So the check
+uses the market's declared `key` pair (US 2s30s, UK 5s30s) and only objects when
+the data contradicts the word at *every* horizon it could have been quoted over.
+
+**The data window has two ends.** Publishers do not land together — the BoE GLC
+file is regularly a session behind the others — so a read is current if it is
+dated anywhere between the date all markets have data through and the freshest
+date any market has. Only outside that window is it stale (or, dated ahead of
+the data, impossible).
+
+**A bad section costs you that section.** A figure the US read cannot justify
+withholds the US lane and leaves the gilt and gold lanes standing, with a note
+on the page saying what was dropped and why. Only a missing read, or one dated
+outside the window, withholds the whole box behind the "Commentary withheld"
+notice.
+
+**Withholding is loud.** `write_commentary.py` reports `published`, `partial` or
+`suppressed` as a step output; the workflow turns `suppressed` into a failed
+`alert` job *after* the deploy, so the curves still publish but the run goes red
+and GitHub mails you. Without that a wordless page ships under a green tick —
+which is exactly what happened on 19 Aug 2026. Set `COMMENTARY_STRICT=1` to make
+the script itself exit non-zero locally.
 
 To hand-write the read, edit `commentary.json` and run
 `python3 write_commentary.py --check` to reconcile it without overwriting.

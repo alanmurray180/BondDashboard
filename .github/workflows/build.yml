@@ -21,6 +21,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      commentary: ${{ steps.commentary.outputs.status }}
     env:
       UK_BASIS: spot          # BoE IADB par endpoint blocks datacentre IPs
     steps:
@@ -45,7 +47,9 @@ jobs:
         # rather than publishing a page with a market silently missing
 
       - name: Write and reconcile commentary
+        id: commentary
         run: python3 write_commentary.py
+        # publishes a step output: published | partial | suppressed
 
       - name: Build page
         run: python3 build_dashboard.py
@@ -63,7 +67,13 @@ jobs:
               lag = (today - dt.date.fromisoformat(m["asof"])).days
               assert lag <= 5, f"{m['code']} stale: as at {m['asof']}"
           cm = d.get("commentary") or {}
-          print("commentary:", "suppressed" if cm.get("suppressed") else "published")
+          if cm.get("suppressed"):
+              print("commentary: suppressed —", "; ".join(cm.get("reasons") or []))
+          elif cm.get("withheld"):
+              print("commentary: partial — withheld:",
+                    "; ".join(w["title"] for w in cm["withheld"]))
+          else:
+              print("commentary: published")
           PY
 
       - name: Stage site
@@ -84,3 +94,15 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  # The page deploys either way — curves are worth publishing without prose. But
+  # a wholly withheld read must not pass as a green run, or nobody finds out the
+  # page has gone wordless.
+  alert:
+    needs: [build, deploy]
+    if: always() && needs.build.outputs.commentary == 'suppressed'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::error title=Commentary withheld::Page deployed without the written read — it did not reconcile against the data. See the 'Write and reconcile commentary' step for the reasons."
+          exit 1

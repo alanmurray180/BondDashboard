@@ -122,6 +122,28 @@ button.ghost[aria-pressed="true"]{background:var(--ink);color:var(--surface-1);b
 .metric .md.dn{color:var(--neg-hi)}
 .metric .md.fl{color:var(--muted)}
 
+/* ---------- terminology ---------- */
+.terms{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.term-box{
+  background:var(--raised);border:1px solid var(--border);border-radius:10px;
+  border-top:2px solid var(--tb);padding:13px 15px 14px;
+}
+.term-box.up{--tb:var(--pos-hi)}
+.term-box.down{--tb:var(--neg-hi)}
+.term-box h3{
+  font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--tb);margin:0 0 3px;display:flex;align-items:center;gap:7px;
+}
+.term-box h3 .arw{font-size:13px;line-height:1}
+.term-box .tsub{font-size:11.5px;color:var(--muted);margin:0 0 12px}
+.term-box dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:6px 13px;align-items:baseline}
+.term-box dt{font-size:12.5px;font-weight:600;color:var(--ink);white-space:nowrap}
+.term-box dd{margin:0;font-size:12px;line-height:1.5;color:var(--ink-2)}
+@media (max-width:560px){
+  .term-box dl{grid-template-columns:1fr;gap:0}
+  .term-box dd{margin:1px 0 9px}
+}
+
 /* ---------- stat tiles ---------- */
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:20px}
 .tile{
@@ -230,6 +252,44 @@ footer.foot b{color:var(--ink-2);font-weight:600}
 </div>
 
 <section class="card brief" id="brief"></section>
+
+<section class="card">
+  <h2>Terminology</h2>
+  <p class="note">Bond prices and yields move inversely, so a yield that rises is a price that
+    falls: a "selloff" and a "rise in yields" describe the same event. Every figure on this page
+    is a yield, never a price.</p>
+  <div class="terms">
+    <div class="term-box up">
+      <h3><span class="arw" aria-hidden="true">&#8593;</span>Yields up &middot; prices down</h3>
+      <p class="tsub">The holder loses; the buyer is paid more to lend.</p>
+      <dl>
+        <dt>sold off, selloff</dt><dd>Buyers stepped back &mdash; yields rose, prices fell.</dd>
+        <dt>rose, higher in yield</dt><dd>The plain form. What rose is the yield, so the price fell.</dd>
+        <dt>backed up</dt><dd>Yields moved higher quickly, usually against the holder.</dd>
+        <dt>cheapened</dt><dd>The bond got cheaper: lower price, higher yield.</dd>
+        <dt>bear steepening</dt><dd>Yields rose across the curve, the long end most.</dd>
+        <dt>bear flattening</dt><dd>Yields rose across the curve, the front end most.</dd>
+        <dt>concession</dt><dd>Extra yield new supply must offer to clear the market.</dd>
+      </dl>
+    </div>
+    <div class="term-box down">
+      <h3><span class="arw" aria-hidden="true">&#8595;</span>Yields down &middot; prices up</h3>
+      <p class="tsub">The holder gains; the buyer accepts less to lend.</p>
+      <dl>
+        <dt>rallied, rally</dt><dd>Buyers came in &mdash; yields fell, prices rose.</dd>
+        <dt>fell, lower in yield</dt><dd>The plain form. What fell is the yield, so the price rose.</dd>
+        <dt>richened</dt><dd>The bond got dearer: higher price, lower yield.</dd>
+        <dt>bid, well bid</dt><dd>Sustained buying. A <i>duration bid</i> is buying concentrated at the long end.</dd>
+        <dt>bull steepening</dt><dd>Yields fell across the curve, the front end most.</dd>
+        <dt>bull flattening</dt><dd>Yields fell across the curve, the long end most.</dd>
+        <dt>flight to quality</dt><dd>A bid for government paper driven by risk aversion elsewhere.</dd>
+      </dl>
+    </div>
+  </div>
+  <p class="note" style="margin:14px 0 0">Steeper and flatter on their own carry no direction &mdash;
+    they describe the gap between two tenors, not whether yields rose or fell; the bull/bear prefix
+    supplies it. Widened and narrowed on this page refer to breakevens, not to bond prices.</p>
+</section>
 
 <div class="tiles" id="tiles"></div>
 

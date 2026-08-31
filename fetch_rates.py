@@ -37,13 +37,38 @@ TODAY = dt.date.today()
 START = TODAY - dt.timedelta(days=int(365.25 * HISTORY_YEARS))
 
 
-def get(url, binary=False, timeout=TIMEOUT):
-    req = Request(url, headers={"User-Agent": UA,
-                                "Accept": "*/*",
-                                "Referer": "https://www.bankofengland.co.uk/"})
+def get(url, binary=False, timeout=TIMEOUT, accept="*/*"):
+    headers = {"User-Agent": UA, "Accept": accept}
+    # The BoE download links check the referer; sending that referer to every
+    # other publisher is at best pointless and at worst reads as a bot.
+    if "bankofengland.co.uk" in url:
+        headers["Referer"] = "https://www.bankofengland.co.uk/"
+    req = Request(url, headers=headers)
     with urlopen(req, timeout=timeout) as r:
         raw = r.read()
     return raw if binary else raw.decode("utf-8", "replace")
+
+
+def get_json(url, timeout=TIMEOUT):
+    """Fetch JSON, and say what actually arrived when it is not JSON.
+
+    A publisher that starts serving an interstitial or a block page answers 200
+    with HTML, so json.loads reports "Expecting value: line 1 column 1" and
+    nothing about the cause. Carry the status, type and opening bytes into the
+    error instead — that is the difference between a diagnosable failure and a
+    guess.
+    """
+    req = Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
+    with urlopen(req, timeout=timeout) as r:
+        status, ctype = r.status, (r.headers.get("Content-Type") or "?")
+        raw = r.read().decode("utf-8", "replace")
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        head = " ".join(raw[:200].split()) or "<empty body>"
+        raise RuntimeError(
+            f"{status} {ctype}, {len(raw)} bytes, not JSON ({e}); starts: {head}"
+        ) from None
 
 
 def log(msg):
@@ -449,7 +474,7 @@ def fetch_us_real():
 
 def fetch_gold():
     """LBMA Gold Price PM auction — the settlement benchmark, USD/GBP/EUR."""
-    raw = json.loads(get("https://prices.lbma.org.uk/json/gold_pm.json"))
+    raw = get_json("https://prices.lbma.org.uk/json/gold_pm.json")
     out = {}
     for r in raw:
         d = r.get("d")
@@ -467,11 +492,15 @@ def fetch_gold():
 
 
 def build_context(us_nominal):
-    ctx = {}
+    """Returns (ctx, errors). A context series that drops out is not fatal —
+    the curves are the point of the page — but it must not vanish quietly, so
+    every failure is carried out to the payload and shown on the page."""
+    ctx, errors = {}, []
     try:
         real = fetch_us_real()
     except Exception as e:                                         # noqa: BLE001
         log(f"US real FAILED: {e}")
+        errors.append({"series": "US real yields (TIPS)", "detail": str(e)})
         real = {}
     if real:
         dates = sorted(real)
@@ -505,10 +534,14 @@ def build_context(us_nominal):
                 "source": "US Treasury — nominal par less real par",
                 "source_url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/TextView?type=daily_treasury_real_yield_curve",
             }
+    if not real:
+        errors.append({"series": "US breakeven inflation",
+                       "detail": "derived from the real curve, which failed"})
     try:
         gold = fetch_gold()
     except Exception as e:                                         # noqa: BLE001
         log(f"Gold FAILED: {e}")
+        errors.append({"series": "Gold, LBMA PM auction", "detail": str(e)})
         gold = {}
     if gold:
         dates = sorted(gold)
@@ -521,7 +554,7 @@ def build_context(us_nominal):
             "source": "LBMA — Gold Price PM auction",
             "source_url": "https://www.lbma.org.uk/prices-and-data/precious-metal-prices",
         }
-    return ctx
+    return ctx, errors
 
 
 # ------------------------------------------------------------- assemble -----
@@ -597,7 +630,7 @@ def main():
         log(f"{code}: {len(dates)} dates, tenors {tenors}, asof {dates[-1]}")
 
     log("=== context (US real yields, breakevens, gold) ===")
-    context = build_context(us_nominal)
+    context, context_errors = build_context(us_nominal)
 
     commentary = {}
     cp = os.path.join(HERE, "commentary.json")
@@ -613,6 +646,7 @@ def main():
         "history_years": HISTORY_YEARS,
         "markets": out_markets,
         "context": context,
+        "context_errors": context_errors,
         "commentary": commentary,
         "manual_quotes": manual,
     }
@@ -620,6 +654,11 @@ def main():
     with open(path, "w") as f:
         json.dump(payload, f, separators=(",", ":"))
     log(f"wrote {path} ({os.path.getsize(path)/1e6:.2f} MB)")
+
+    # A missing context series is loud but not fatal; a missing market is both.
+    if context_errors and os.environ.get("GITHUB_ACTIONS"):
+        detail = " · ".join(f"{e['series']}: {e['detail']}" for e in context_errors)
+        print(f"::warning title=Context series unavailable::{detail}")
 
     missing = [m["code"] for m in MARKETS
                if m["code"] not in {x["code"] for x in out_markets}]

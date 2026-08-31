@@ -122,6 +122,17 @@ button.ghost[aria-pressed="true"]{background:var(--ink);color:var(--surface-1);b
 .metric .md.dn{color:var(--neg-hi)}
 .metric .md.fl{color:var(--muted)}
 
+/* ---------- freshness banner ---------- */
+.stale{
+  border:1px solid var(--border);border-left:3px solid var(--sc);
+  background:var(--raised);border-radius:10px;padding:11px 15px;margin-bottom:20px;
+  font-size:12.5px;line-height:1.55;color:var(--ink-2);box-shadow:var(--shadow);
+}
+.stale.warn{--sc:var(--m-JP)}
+.stale.bad{--sc:var(--pos-hi)}
+.stale b{color:var(--ink);font-weight:600}
+.stale .why{color:var(--muted);font-size:11.5px;display:block;margin-top:3px}
+
 /* ---------- terminology ---------- */
 .terms{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
 .term-box{
@@ -251,6 +262,8 @@ footer.foot b{color:var(--ink-2);font-weight:600}
   <span class="fhint">scopes every table and chart below</span>
 </div>
 
+<div id="freshness" class="hidden"></div>
+
 <section class="card brief" id="brief"></section>
 
 <section class="card">
@@ -325,6 +338,7 @@ footer.foot b{color:var(--ink-2);font-weight:600}
   <p class="note">US real yields are the Treasury's own TIPS par curve; breakeven inflation is
     the nominal par curve less the real par curve, same publisher and same day. Gold is the
     LBMA PM auction. Gold rows show percentage moves, everything else basis points.</p>
+  <p class="note hidden" id="ctxMissing"></p>
   <div class="tbl-scroll"><table class="grid" id="gridCtx"></table></div>
 </section>
 
@@ -369,6 +383,7 @@ const DATA = JSON.parse(document.getElementById('payload').textContent);
 const M = DATA.markets;
 const byCode = Object.fromEntries(M.map(m=>[m.code,m]));
 const $ = s=>document.querySelector(s);
+const esc=v=>String(v==null?'':v).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const el=(t,c,h)=>{const n=document.createElement(t); if(c)n.className=c; if(h!=null)n.innerHTML=h; return n;};
 
 /* ------------------------------------------------ state */
@@ -1017,11 +1032,67 @@ function renderBrief(){
   if(cm.footnote) host.appendChild(el('p','note',cm.footnote));
 }
 
+/* ------------------------------------------------ freshness */
+/* Build windows in UTC hours, mirroring the cron list in
+   .github/workflows/build.yml. Staleness is measured in windows that came and
+   went without producing a newer build, not in wall-clock age: the schedule is
+   weekdays-only and unevenly spaced, so age alone cries wolf every Monday
+   morning and stays quiet through a weekday outage. One missed window is a
+   delayed firing and normal; several mean the schedule is not running. */
+const BUILD_WINDOWS_UTC=[6+40/60, 8+40/60, 11+40/60, 14+40/60, 16+40/60, 19+40/60];
+function missedWindows(then, now){
+  let n=0;
+  const day=new Date(Date.UTC(then.getUTCFullYear(), then.getUTCMonth(), then.getUTCDate()));
+  for(let i=0; i<400 && day.getTime()<=now.getTime(); i++){
+    const dow=day.getUTCDay();
+    if(dow>=1 && dow<=5){
+      for(const h of BUILD_WINDOWS_UTC){
+        const t=day.getTime()+h*3600000;
+        if(t>then.getTime() && t<=now.getTime()) n++;
+      }
+    }
+    day.setUTCDate(day.getUTCDate()+1);
+  }
+  return n;
+}
+function agoWords(then, now){
+  const h=(now-then)/3600000;
+  if(h < 1.5) return 'less than an hour ago';
+  if(h < 48) return Math.round(h)+' hours ago';
+  return Math.round(h/24)+' days ago';
+}
+function renderFreshness(){
+  const host=$('#freshness');
+  const gen=DATA.generated? new Date(DATA.generated) : null;
+  if(!gen || isNaN(gen.getTime())){ host.classList.add('hidden'); return; }
+  const now=new Date();
+  const n=missedWindows(gen, now);
+  const level = n>=4? 'bad' : n>=2? 'warn' : null;
+  if(!level){ host.classList.add('hidden'); return; }
+  host.className='stale '+level;
+  host.innerHTML =
+    '<b>This page has not rebuilt since '+gen.toISOString().slice(0,16).replace('T',' ')+
+    ' UTC — '+agoWords(gen, now)+'.</b> '+n+' scheduled '+(n===1?'build has':'builds have')+
+    ' passed since, so every figure below is as at that build, not today.'+
+    '<span class="why">The build runs on GitHub\'s scheduler, which delays and '+
+    'sometimes drops firings. Re-run it from the Actions tab to bring the page current.</span>';
+}
+
 /* ------------------------------------------------ context grid */
 function renderCtxGrid(){
   const card=$('#ctxCard'), tbl=$('#gridCtx');
   const keys=Object.keys(CTX);
-  if(!keys.length){ card.classList.add('hidden'); return; }
+  const errs=DATA.context_errors||[];
+  const note=$('#ctxMissing');
+  if(errs.length){
+    note.classList.remove('hidden');
+    note.innerHTML='Unavailable this build: '+
+      errs.map(e=>`<b>${esc(e.series)}</b> (${esc(e.detail)})`).join(' · ')+
+      '. The rows below are what the publishers returned; the rest of the page is unaffected.';
+  } else {
+    note.classList.add('hidden');
+  }
+  if(!keys.length && !errs.length){ card.classList.add('hidden'); return; }
   card.classList.remove('hidden');
   tbl.innerHTML=''; headerRow(tbl,'Series');
   const tb=el('tbody'); tbl.appendChild(tb);
@@ -1141,6 +1212,7 @@ function renderFooter(){
 /* ------------------------------------------------ orchestration */
 function renderAll(){
   buildRamp();
+  renderFreshness();
   renderBrief(); buildTiles();
   renderYieldGrid(); renderSpreadGrid(); renderCrossGrid(); renderCtxGrid();
   renderScaleKey(); renderCross(); renderCurves(); renderTableView(); renderFooter();
@@ -1161,7 +1233,8 @@ let rt; addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(()=>{rende
 
 $('#stamp').textContent =
   M.map(m=>`${m.code} ${labelDay(toDay(m.asof))}`).join('  ·  ') +
-  '   ·   built ' + DATA.generated.slice(0,10);
+  '   ·   built ' + DATA.generated.slice(0,10) +
+  (DATA.generated? ' (' + agoWords(new Date(DATA.generated), new Date()) + ')' : '');
 buildChips();
 renderAll();
 })();

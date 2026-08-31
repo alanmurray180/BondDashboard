@@ -2,11 +2,23 @@ name: Build bond yield monitor
 
 on:
   schedule:
-    # 06:40 and 16:40 UTC on weekdays. The 06:40 run catches the BoE GLC
-    # current-month file (published ~08:00 London) from the prior session; the
-    # 16:40 run picks up the Bundesbank same-day curve before the US close.
+    # Weekdays. The 06:40 window catches the BoE GLC current-month file
+    # (published ~08:00 London) from the prior session; the 16:40 one picks up
+    # the Bundesbank same-day curve before the US close.
+    #
+    # The intermediate windows are deliberate redundancy, not extra coverage.
+    # GitHub's scheduler is best-effort: firings are delayed under load and
+    # dropped outright when the delay runs long. Through late August 2026 the
+    # delay grew from ~30 minutes to 8+ hours, whole firings went missing, and
+    # the page sat three days stale under a green tick. A build is ~40s and the
+    # deploy is idempotent, so a dropped firing simply gets picked up by the
+    # next one rather than waiting half a day.
     - cron: "40 6 * * 1-5"
+    - cron: "40 8 * * 1-5"
+    - cron: "40 11 * * 1-5"
+    - cron: "40 14 * * 1-5"
     - cron: "40 16 * * 1-5"
+    - cron: "40 19 * * 1-5"
   workflow_dispatch:
 
 permissions:
@@ -66,6 +78,9 @@ jobs:
           for m in d["markets"]:
               lag = (today - dt.date.fromisoformat(m["asof"])).days
               assert lag <= 5, f"{m['code']} stale: as at {m['asof']}"
+          errs = d.get("context_errors") or []
+          for e in errs:
+              print(f"context series unavailable: {e['series']} — {e['detail']}")
           cm = d.get("commentary") or {}
           if cm.get("suppressed"):
               print("commentary: suppressed —", "; ".join(cm.get("reasons") or []))

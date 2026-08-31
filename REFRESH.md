@@ -42,6 +42,38 @@ missing, and the workflow asserts all four markets are present and no curve is
 more than five days stale. Without that a scheduled run reports success while
 serving a page with a market silently absent.
 
+A *context* series — real yields, breakevens, gold — is not fatal in the same
+way; the curves are the point of the page. But it must not vanish quietly
+either, so `build_context()` returns its failures alongside the data, they are
+written to `rates.json` as `context_errors`, annotated on the run, and named on
+the page under the context grid. Gold disappeared for three days in August 2026
+under a green tick because the old code logged the exception and moved on.
+
+When a publisher starts answering 200 with an interstitial instead of JSON,
+`json.loads` reports only "Expecting value: line 1 column 1". `get_json()`
+carries the status, content type, length and opening bytes into the error
+instead, which is the difference between a diagnosable failure and a guess.
+
+## Why the schedule is redundant
+
+GitHub's `schedule` trigger is best-effort: firings are delayed under load and
+dropped outright when the delay runs long. Through late August 2026 the delay on
+this repo grew from ~30 minutes to 8+ hours, whole firings went missing, one
+landed on a Saturday that the `1-5` cron excludes, and the page sat three days
+stale while every run that *did* fire went green.
+
+So the workflow declares six weekday windows rather than two. They are not extra
+coverage — the data only moves twice a day — they are redundancy, so a dropped
+firing is picked up two hours later instead of half a day later. A build takes
+~40s and the deploy is idempotent, so the cost of the extra runs is nil.
+
+Redundancy narrows the window; it cannot close it. The page therefore judges its
+own freshness: `renderFreshness()` counts how many build windows have passed
+since `generated` without producing a newer build, skipping weekends, and shows
+a banner at two and a louder one at four. One missed window is a delayed firing
+and stays quiet. The build cannot detect its own non-firing, so this check has
+to live on the page rather than in the workflow.
+
 ## The commentary gate
 
 `write_commentary.py` composes the morning read from `rates.json` itself, so every

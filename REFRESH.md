@@ -54,6 +54,21 @@ When a publisher starts answering 200 with an interstitial instead of JSON,
 carries the status, content type, length and opening bytes into the error
 instead, which is the difference between a diagnosable failure and a guess.
 
+## Cross-market figures are quoted on a common date
+
+Publishers do not keep the same clock. The US Treasury posts the day's par
+curve after its own close; the BoE posts the *previous* session's curve around
+midday London. So on a morning build the US carries a session the gilt curve
+has not seen, and the two markets' holiday calendars diverge besides — 31 Aug
+2026 was a UK bank holiday and a normal US session.
+
+Pairing each market's latest observation therefore books a session of US move
+against a gilt that never traded it. A spread between two markets only exists
+on a day both of them traded, so `crossSeries()` emits a differential only
+where both have an observation on the same date, and `Curve.common_latest()`
+gives the written commentary the same footing. The date can sit behind the
+fresher market; that is the honest answer, and the page says so.
+
 ## The UK archive cache
 
 The UK curve is assembled from two BoE downloads: the ~39MB historical archive

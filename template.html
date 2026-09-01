@@ -329,7 +329,10 @@ footer.foot b{color:var(--ink-2);font-weight:600}
 <section class="card">
   <h2>Cross-market differentials</h2>
   <p class="note">Same tenor, one market minus another, in basis points. Positive means the
-    first-named market yields more.</p>
+    first-named market yields more. Each differential is quoted only on days both markets
+    traded and both curves were published, so the date shown can sit behind the fresher of
+    the two markets — a spread against a session the other market has not seen yet is not a
+    spread.</p>
   <div class="tbl-scroll"><table class="grid" id="gridCross"></table></div>
 </section>
 
@@ -421,14 +424,21 @@ function spreadSeries(m,a,b){
   return {dates:m.dates, vals:m.dates.map((_,i)=> (A[i]==null||B[i]==null)?null:(B[i]-A[i]))};
 }
 function crossSeries(ma,mb,t){
-  // align on market A's dates, take B's value on-or-before
-  const A=ma.series[t]||[], out=[];
+  // Same-date only. Taking B's last value on-or-before A's date pairs a fresh
+  // Treasury against a stale gilt whenever the two publishers or the two
+  // holiday calendars diverge — the BoE publishes a session later than the US
+  // Treasury, so on a morning build the printed differential carried a session
+  // of US move the gilt leg had never seen. A spread between two markets only
+  // exists on a day both of them traded.
+  const A=ma.series[t]||[], B=mb.series[t]||[];
+  const bi=new Map(); mb.dates.forEach((d,i)=>bi.set(d,i));
+  const dates=[], vals=[];
   for(let i=0;i<ma.dates.length;i++){
-    const j=idxOnOrBefore(mb.dates, ma.dates[i]);
-    const bv = j>=0 ? (mb.series[t]||[])[j] : null;
-    out.push(A[i]==null||bv==null?null:(A[i]-bv));
+    const j=bi.get(ma.dates[i]);
+    if(j===undefined || A[i]==null || B[j]==null) continue;
+    dates.push(ma.dates[i]); vals.push(A[i]-B[j]);
   }
-  return {dates:ma.dates, vals:out};
+  return {dates, vals};
 }
 function lastValid(s){
   for(let i=s.vals.length-1;i>=0;i--) if(s.vals[i]!=null) return {i, v:s.vals[i], d:s.dates[i]};

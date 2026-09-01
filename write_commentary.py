@@ -130,6 +130,20 @@ class Curve:
             return None
         return ser[-1] - ser[j]
 
+    def common_latest(self, code_a, code_b):
+        """Latest date both markets actually traded and published.
+
+        Cross-market figures must be quoted here, not at each market's own last
+        observation: the BoE publishes a session behind the US Treasury, so
+        pairing the two latest values silently books a session of US move
+        against a gilt that never saw it.
+        """
+        a, b = self.m.get(code_a), self.m.get(code_b)
+        if not a or not b:
+            return None
+        both = set(a["dates"]) & set(b["dates"])
+        return max(both) if both else None
+
     def data_window(self):
         """(common, latest) — the date every market has data through, and the
         freshest date any market has. They differ whenever one publisher lags:
@@ -281,11 +295,16 @@ def write_uk(cv):
         p3 += (", so the strip is pricing "
                + ("no easing to speak of" if gap > 0 else "cuts ahead")
                + ".")
-    us_30 = cv.level("US", "30Y")
-    if us_30 is not None:
-        diff = (lvl_b - us_30) * 100
+    common = cv.common_latest("UK", "US")
+    uk_30_c = cv.level("UK", "30Y", common) if common else None
+    us_30_c = cv.level("US", "30Y", common) if common else None
+    if uk_30_c is not None and us_30_c is not None:
+        diff = (uk_30_c - us_30_c) * 100
         p3 += (f" The 30y sits {_bp(diff, 0)} "
-               f"{'above' if diff > 0 else 'below'} the US long bond.")
+               f"{'above' if diff > 0 else 'below'} the US long bond")
+        us_asof = (cv.m.get("US") or {}).get("asof")
+        # Name the date whenever it is not simply "today" for both of them.
+        p3 += f" as at {common}." if common != us_asof else "."
     if p3:
         paras.append(p3.strip())
 
@@ -483,14 +502,21 @@ def candidate_values(cv, code):
             pcts.add(float(raw))
         if pol.get("cpi") is not None:
             pcts.add(float(pol["cpi"]))
-        # cross-market differentials at matching tenors
+        # Cross-market differentials at matching tenors. The auto-written prose
+        # quotes these on the latest common date; a human might reasonably quote
+        # either that or each market's own latest, so both are allowed rather
+        # than risking a false suppression.
         for other in cv.m.values():
             if other["code"] == c:
                 continue
+            common = cv.common_latest(c, other["code"])
+            days = [None] + ([common] if common else [])
             for t in set(m["tenors"]) & set(other["tenors"]):
-                a, b = cv.level(c, t), cv.level(other["code"], t)
-                if a is not None and b is not None:
-                    bps.add((a - b) * 100)
+                for day in days:
+                    a = cv.level(c, t, day)
+                    b = cv.level(other["code"], t, day)
+                    if a is not None and b is not None:
+                        bps.add((a - b) * 100)
     for key, ctx in cv.ctx.items():
         for t in ctx["tenors"]:
             v = cv.ctx_level(key, t)

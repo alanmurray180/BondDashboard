@@ -19,6 +19,10 @@ on:
     - cron: "40 14 * * 1-5"
     - cron: "40 16 * * 1-5"
     - cron: "40 19 * * 1-5"
+    # The US Treasury posts the day's par curve after its own close, so the
+    # 19:40 window can be a shade early for it. This one makes the evening page
+    # reliably carry the US session that just ended.
+    - cron: "40 21 * * 1-5"
   workflow_dispatch:
 
 permissions:

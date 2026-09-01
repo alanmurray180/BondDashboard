@@ -46,12 +46,26 @@ jobs:
 
       - run: pip install openpyxl
 
-      # Cache the 39MB BoE GLC archive; it only changes monthly.
+      - name: Week stamp for the GLC archive cache
+        run: echo "GLC_WEEK=$(date -u +%G-W%V)" >> "$GITHUB_ENV"
+
+      # Cache the 39MB BoE GLC archive for a week, and no longer.
+      #
+      # The UK curve is archive + current-month file. On the 1st the
+      # current-month file rolls over, and the tail of the month it just left
+      # only exists in the archive — so an archive pinned to weeks earlier
+      # silently drops the end of the previous month, taking the 1m and 3m
+      # lookbacks with it. The old key was the run id with a `glc-archive-`
+      # restore prefix, which always restored the first copy ever fetched;
+      # fetch_rates only re-downloads when the file is 7+ days old by mtime, and
+      # the cache round-trip refreshes that, so the expiry never fired.
+      #
+      # Keying on the ISO week with no restore-keys makes the first run of each
+      # week a deliberate miss, which is what forces the fresh download.
       - uses: actions/cache@v4
         with:
           path: glcnominalddata.zip
-          key: glc-archive-${{ github.run_id }}
-          restore-keys: glc-archive-
+          key: glc-archive-${{ env.GLC_WEEK }}
 
       - name: Fetch curves
         run: python3 fetch_rates.py
@@ -78,6 +92,16 @@ jobs:
           for m in d["markets"]:
               lag = (today - dt.date.fromisoformat(m["asof"])).days
               assert lag <= 5, f"{m['code']} stale: as at {m['asof']}"
+              # A hole in the middle of a series shortens every lookback across
+              # it without changing anything visible. Holidays make gaps of a
+              # few days — Christmas and Easter run to about five — so only a
+              # far larger one means data has actually gone missing.
+              ds = [dt.date.fromisoformat(x) for x in m["dates"][-90:]]
+              gaps = [((b - a).days, a, b) for a, b in zip(ds, ds[1:])]
+              worst = max(gaps) if gaps else (0, None, None)
+              assert worst[0] <= 10, (
+                  f"{m['code']} has a {worst[0]}-day hole between "
+                  f"{worst[1]} and {worst[2]}")
           errs = d.get("context_errors") or []
           for e in errs:
               print(f"context series unavailable: {e['series']} — {e['detail']}")

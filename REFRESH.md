@@ -54,6 +54,31 @@ When a publisher starts answering 200 with an interstitial instead of JSON,
 carries the status, content type, length and opening bytes into the error
 instead, which is the difference between a diagnosable failure and a guess.
 
+## The UK archive cache
+
+The UK curve is assembled from two BoE downloads: the ~39MB historical archive
+and a "current month" file. Only the current-month file is fetched every run;
+the archive is cached, because it is large and changes rarely.
+
+On the 1st the current-month file rolls over, and the tail of the month it just
+left lives only in the archive. So a stale archive does not look broken — it
+silently drops the end of the previous month, and every lookback that spans the
+hole quietly shortens.
+
+The old cache key was the run id with a `glc-archive-` restore prefix, which
+restored the first copy ever fetched, forever. `_glc_zip()` only re-downloads
+when the file is 7+ days old by mtime, and the cache round-trip refreshes that
+mtime, so the expiry never fired. The key is now the ISO week with no
+restore-keys, making the first run of each week a deliberate miss.
+
+The workflow also asserts that no market has an interior gap of more than ten
+days across its last 90 observations. Holidays make gaps of a few days —
+Christmas and Easter run to about five — so a larger one means data has gone
+missing rather than the market having been shut. This fails the build: a page
+with a hole in it reports moves over the wrong window, which is worse than a
+page that does not update, and the freshness banner now makes the latter
+visible anyway.
+
 ## Why the schedule is redundant
 
 GitHub's `schedule` trigger is best-effort: firings are delayed under load and

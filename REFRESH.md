@@ -42,6 +42,13 @@ missing, and the workflow asserts all four markets are present and no curve is
 more than five days stale. Without that a scheduled run reports success while
 serving a page with a market silently absent.
 
+Loud does not mean brittle, though. Every fetch retries twice through a
+transient upstream failure — 1.5s then 3s — because publishers have moments: on
+1 Sep 2026 the Bundesbank answered 400 to all six tenor requests inside six
+seconds and was serving normally an hour later, and a single-shot fetch turned
+that into a failed build. A 404 is not a moment and is not retried. A real
+outage still exhausts the attempts and fails, costing about 4.5s per dead URL.
+
 A *context* series — real yields, breakevens, gold — is not fatal in the same
 way; the curves are the point of the page. But it must not vanish quietly
 either, so `build_context()` returns its failures alongside the data, they are

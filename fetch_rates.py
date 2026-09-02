@@ -21,8 +21,10 @@ import json
 import os
 import re
 import sys
+import time
 import zipfile
 import datetime as dt
+from urllib.error import HTTPError, URLError
 from urllib.request import urlopen, Request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -37,15 +39,48 @@ TODAY = dt.date.today()
 START = TODAY - dt.timedelta(days=int(365.25 * HISTORY_YEARS))
 
 
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF = 1.5        # seconds before the first retry, doubling after
+
+
+def _fetch(url, headers, timeout):
+    """One GET, retried through a transient upstream failure.
+
+    Publishers have moments. On 1 Sep 2026 the Bundesbank answered 400 to all
+    six tenor requests inside six seconds and was serving normally an hour
+    later; with a single-shot fetch that cost the whole build, because a market
+    that drops out entirely is fatal by design. A second attempt is far cheaper
+    than a lost window.
+
+    A 404 is not a moment, so it is not retried — that would just add seconds
+    to every run against a URL that has genuinely moved. A real outage still
+    exhausts the attempts and fails as loudly as before.
+    """
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            with urlopen(Request(url, headers=headers), timeout=timeout) as r:
+                return r.status, (r.headers.get("Content-Type") or "?"), r.read()
+        except HTTPError as e:
+            if e.code == 404 or attempt == RETRY_ATTEMPTS:
+                raise
+            why = f"HTTP {e.code}"
+        except (URLError, OSError) as e:
+            if attempt == RETRY_ATTEMPTS:
+                raise
+            why = str(e)
+        wait = RETRY_BACKOFF * 2 ** (attempt - 1)
+        log(f"retrying in {wait:.1f}s after {why} "
+            f"(attempt {attempt} of {RETRY_ATTEMPTS}): {url[:90]}")
+        time.sleep(wait)
+
+
 def get(url, binary=False, timeout=TIMEOUT, accept="*/*"):
     headers = {"User-Agent": UA, "Accept": accept}
     # The BoE download links check the referer; sending that referer to every
     # other publisher is at best pointless and at worst reads as a bot.
     if "bankofengland.co.uk" in url:
         headers["Referer"] = "https://www.bankofengland.co.uk/"
-    req = Request(url, headers=headers)
-    with urlopen(req, timeout=timeout) as r:
-        raw = r.read()
+    _, _, raw = _fetch(url, headers, timeout)
     return raw if binary else raw.decode("utf-8", "replace")
 
 
@@ -58,10 +93,9 @@ def get_json(url, timeout=TIMEOUT):
     error instead — that is the difference between a diagnosable failure and a
     guess.
     """
-    req = Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
-    with urlopen(req, timeout=timeout) as r:
-        status, ctype = r.status, (r.headers.get("Content-Type") or "?")
-        raw = r.read().decode("utf-8", "replace")
+    status, ctype, body = _fetch(
+        url, {"User-Agent": UA, "Accept": "application/json"}, timeout)
+    raw = body.decode("utf-8", "replace")
     try:
         return json.loads(raw)
     except json.JSONDecodeError as e:

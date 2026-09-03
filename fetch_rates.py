@@ -638,24 +638,42 @@ def build_context(us_nominal):
 MAX_HISTORY_GAP_DAYS = 10   # holidays make gaps of a few days; Christmas ~5
 
 
-def contiguous_tail(dates, max_gap=MAX_HISTORY_GAP_DAYS):
-    """Drop the history sitting behind a hole, and say what was dropped.
+def gap_filled(dates, max_gap=MAX_HISTORY_GAP_DAYS):
+    """Keep the whole history and make its holes visible to every lookback.
 
-    A gap far larger than a holiday closure means sessions are missing, and
-    every lookback spanning it quietly measures the wrong window — a "1m" move
-    computed across a five-week void is not a 1m move. Serving a shorter series
-    that is true beats serving a longer one that is not, and beats serving
-    nothing at all while a publisher sorts itself out.
+    A gap far larger than a holiday closure means sessions are missing, and a
+    lookback spanning it quietly measures the wrong window — a "1m" move
+    computed across a five-week void is not a 1m move. The first cut at this
+    dropped everything behind the hole, which was far too blunt: one September
+    session arriving before August had been restored threw away 1,492 good ones
+    and emptied the gilt panel.
+
+    Missing sessions are missing, not absent-from-history. Writing them in as
+    empty weekdays says exactly that: a lookback landing inside the hole finds a
+    row with no value and returns nothing, while one reaching clean past it —
+    the 1y, the 5y — still lands on a real observation and answers honestly.
+    The series keeps its full span, and only the comparisons that would have
+    crossed the hole are refused.
+
+    Returns (dates_including_the_blanks, [gap descriptions]).
     """
     if len(dates) < 2:
-        return dates, None
-    for i in range(len(dates) - 1, 0, -1):
-        gap = (dt.date.fromisoformat(dates[i])
-               - dt.date.fromisoformat(dates[i - 1])).days
-        if gap > max_gap:
-            return dates[i:], {"from": dates[i], "after": dates[i - 1],
-                               "gap_days": gap, "dropped": i}
-    return dates, None
+        return list(dates), []
+    out, gaps = [dates[0]], []
+    for prev, cur in zip(dates, dates[1:]):
+        a, b = dt.date.fromisoformat(prev), dt.date.fromisoformat(cur)
+        if (b - a).days > max_gap:
+            blanks = []
+            d = a + dt.timedelta(days=1)
+            while d < b:
+                if d.weekday() < 5:          # weekends are not missing sessions
+                    blanks.append(d.isoformat())
+                d += dt.timedelta(days=1)
+            out.extend(blanks)
+            gaps.append({"after": prev, "until": cur,
+                         "days": (b - a).days, "blanks": len(blanks)})
+        out.append(cur)
+    return out, gaps
 
 
 # ------------------------------------------------------------- assemble -----
@@ -718,15 +736,17 @@ def main():
         if not data:
             log(f"{code}: no data")
             continue
-        dates, cut = contiguous_tail(sorted(data))
-        if cut:
-            log(f"{code}: {cut['gap_days']}-day hole after {cut['after']}; "
-                f"history truncated to start {cut['from']}, "
-                f"{cut['dropped']} earlier session(s) dropped")
+        dates, gaps = gap_filled(sorted(data))
+        if gaps:
+            for g in gaps:
+                log(f"{code}: {g['days']}-day hole between {g['after']} and "
+                    f"{g['until']}; {g['blanks']} weekday(s) left blank so "
+                    f"lookbacks into it return nothing")
             meta = dict(meta)
-            meta["history_truncated"] = cut
-        tenors = [t for t in spec["tenors"] if any(t in data[d] for d in dates)]
-        series = {t: [data[d].get(t) for d in dates] for t in tenors}
+            meta["history_gaps"] = gaps
+        tenors = [t for t in spec["tenors"]
+                  if any(t in data.get(d, {}) for d in dates)]
+        series = {t: [data.get(d, {}).get(t) for d in dates] for t in tenors}
         m = {k: v for k, v in spec.items()}
         m["basis"] = meta.get("basis_override", m["basis"])
         m["source"] = meta.get("source_override", m["source"])

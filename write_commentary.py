@@ -279,11 +279,20 @@ def write_uk(cv):
     paras.append(p1)
 
     if m3_sp is not None:
-        paras.append(
-            f"Over three months 5s30s is {_bp(m3_sp, 1)} "
-            f"{'steeper' if m3_sp > 0 else 'flatter'}, so the quarter's story is "
-            f"{'the long end lagging the front' if m3_sp > 0 else 'the long end leading'}."
-        )
+        # A fraction of a basis point is not a direction. Calling it one put a
+        # true-but-trivial "steeper" next to three flattening horizons.
+        if abs(m3_sp) < DIR_MIN_BP:
+            paras.append(
+                f"Over three months 5s30s has gone nowhere, within "
+                f"{_bp(m3_sp, 1)} of where it started, so the shape of the "
+                f"curve is not the quarter's story."
+            )
+        else:
+            paras.append(
+                f"Over three months 5s30s is {_bp(m3_sp, 1)} "
+                f"{'steeper' if m3_sp > 0 else 'flatter'}, so the quarter's story is "
+                f"{'the long end lagging the front' if m3_sp > 0 else 'the long end leading'}."
+            )
 
     p3 = ""
     if pol.get("rate", pol.get("value")) is not None:
@@ -412,8 +421,10 @@ NUM_USD = re.compile(r"\$\s*([\d,]+(?:\.\d+)?)")
 DIR_HORIZONS = ("1d", "5d", "1m", "3m")
 DIR_MIN_BP = 1.5     # below this a move is noise, not a direction
 
-STEEPER = re.compile(r"\bsteep(er|ening)\b", re.I)
-FLATTER = re.compile(r"\bflatt(er|ening)\b", re.I)
+# Past tense too: prose written by hand says "the curve steepened", and a rule
+# that only knows "steeper" and "steepening" waves it through unchecked.
+STEEPER = re.compile(r"\bsteep(er|ens|ened|ening)\b", re.I)
+FLATTER = re.compile(r"\bflatt(er|ens|ened|ening)\b", re.I)
 SOLDOFF = re.compile(r"\b(sold off|selloff|sell-off|rose|higher in yield)\b", re.I)
 RALLIED = re.compile(r"\b(rallied|rally|fell|lower in yield)\b", re.I)
 
@@ -437,12 +448,26 @@ def _pair_label(short, long_):
     return f"{short}/{long_}"
 
 
+def _known(values):
+    return [v for v in values if v is not None]
+
+
 def _moves(values):
-    return [v for v in values if v is not None and abs(v) >= DIR_MIN_BP]
+    return [v for v in values if abs(v) >= DIR_MIN_BP]
 
 
 def directional_reasons(cv, code, text, title):
-    """Directional language checked against the pair and horizons it describes."""
+    """Directional language checked against the pair and horizons it describes.
+
+    Two separate questions, and conflating them is what withheld the gilt read
+    on 2 September. `_moves` answers "is there a move here worth judging at
+    all", so that a curve which has not gone anywhere cannot contradict
+    anything. The contradiction itself is then judged on every horizon that has
+    a number, noise included — because the prose is entitled to describe a small
+    move, and the horizon it describes must not be the one the noise filter
+    threw away. Saying "0.8bp steeper" while the other horizons flattened is an
+    accurate sentence, and the old rule read it as a lie.
+    """
     m = cv.m.get(code)
     if not m or len(m["tenors"]) < 2:
         return []
@@ -450,18 +475,18 @@ def directional_reasons(cv, code, text, title):
     pair = _pair_label(short, long_)
     reasons = []
 
-    sps = _moves([cv.spread_change_bp(code, short, long_, h) for h in DIR_HORIZONS])
-    if sps:
-        if STEEPER.search(text) and all(x < 0 for x in sps):
+    sps = _known([cv.spread_change_bp(code, short, long_, h) for h in DIR_HORIZONS])
+    if _moves(sps):
+        if STEEPER.search(text) and not any(x > 0 for x in sps):
             reasons.append(f"{title}: says steeper, {pair} flattened over every horizon")
-        if FLATTER.search(text) and all(x > 0 for x in sps):
+        if FLATTER.search(text) and not any(x < 0 for x in sps):
             reasons.append(f"{title}: says flatter, {pair} steepened over every horizon")
 
-    ds = _moves([cv.change_bp(code, long_, h) for h in DIR_HORIZONS])
-    if ds:
-        if SOLDOFF.search(text) and all(x < 0 for x in ds) and not RALLIED.search(text):
+    ds = _known([cv.change_bp(code, long_, h) for h in DIR_HORIZONS])
+    if _moves(ds):
+        if SOLDOFF.search(text) and not any(x > 0 for x in ds) and not RALLIED.search(text):
             reasons.append(f"{title}: says selloff, the {long_} fell over every horizon")
-        if RALLIED.search(text) and all(x > 0 for x in ds) and not SOLDOFF.search(text):
+        if RALLIED.search(text) and not any(x < 0 for x in ds) and not SOLDOFF.search(text):
             reasons.append(f"{title}: says rally, the {long_} rose over every horizon")
     return reasons
 

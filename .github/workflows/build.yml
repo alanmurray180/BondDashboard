@@ -27,6 +27,7 @@ on:
 
 permissions:
   contents: read
+  actions: read           # to read the pre-rollover artifact, see the seed step
   pages: write
   id-token: write
 
@@ -81,6 +82,29 @@ jobs:
           path: uk_glc_store.json
           key: uk-glc-store-${{ github.run_id }}
           restore-keys: uk-glc-store-
+
+      # ONE-OFF, REMOVE ONCE THE STORE HAS AUGUST 2026.
+      # August fell out of both BoE files at the month rollover before the store
+      # existed, so there was nothing to restore it from. Run 33619233828 is the
+      # last build that carries the whole series in its page payload; the
+      # artifact expires 2026-09-03T10:24Z. Both steps tolerate failure so an
+      # expired or missing artifact can never fail a build.
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: github-pages
+          run-id: 33619233828
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: seed
+      - name: Seed the UK store from a pre-rollover page
+        continue-on-error: true
+        run: |
+          if [ -f seed/artifact.tar ]; then
+            tar -xf seed/artifact.tar -C seed
+            python3 seed_store.py seed/index.html
+          else
+            echo "no seed artifact (expired or already removed) — skipping"
+          fi
 
       - name: Fetch curves
         run: python3 fetch_rates.py

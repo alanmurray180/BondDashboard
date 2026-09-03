@@ -228,6 +228,47 @@ def _glc_from_zip(raw, match):
     return out
 
 
+UK_STORE = os.path.join(HERE, "uk_glc_store.json")
+STORE_DAYS = 400           # bridges any plausible publisher lag; deep history
+                           # still comes from the archive
+
+
+def _store_merge(fresh):
+    """Union today's parse with the sessions earlier runs already saw.
+
+    The BoE serves recent history across two files — a periodic archive and a
+    current-month file — and they do not hand over cleanly. On 2 Sep 2026 the
+    current-month file rolled to September while the archive still ended
+    31 July, so August existed in neither and the gilt curve lost twenty-one
+    sessions. Refreshing the archive does not help: that lag is the BoE's, not
+    ours. Remembering what we have already been given does.
+
+    Fresh data always wins — the store only supplies dates today's fetch does
+    not carry — so a revision is never resurrected by this.
+    """
+    keep_from = (TODAY - dt.timedelta(days=STORE_DAYS)).isoformat()
+    store = {}
+    if os.path.exists(UK_STORE):
+        try:
+            store = json.load(open(UK_STORE, encoding="utf-8"))
+        except Exception as e:                                     # noqa: BLE001
+            log(f"UK: store unreadable ({e}); starting a new one")
+    restored = sorted(d for d in store if d not in fresh and d >= keep_from)
+    for d in restored:
+        fresh[d] = store[d]
+    if restored:
+        log(f"UK: {len(restored)} session(s) restored from the store "
+            f"({restored[0]} to {restored[-1]})")
+    try:
+        recent = {d: v for d, v in sorted(fresh.items()) if d >= keep_from}
+        with open(UK_STORE, "w", encoding="utf-8") as f:
+            json.dump(recent, f, separators=(",", ":"))
+        log(f"UK: store holds {len(recent)} session(s)")
+    except Exception as e:                                         # noqa: BLE001
+        log(f"UK: could not write store ({e})")
+    return fresh
+
+
 def fetch_uk_glc():
     import openpyxl
     raw = _glc_zip()
@@ -254,11 +295,14 @@ def fetch_uk_glc():
                 out.update(_parse_glc_sheet(wb[sheet]))
             wb.close()
     try:
-        cur = _glc_from_zip(_glc_current_zip(),
-                            lambda n: "Nominal daily" in n and "current" in n.lower())
+        # Every Nominal daily sheet in the latest zip, not only the one named
+        # "current". If the BoE also ships the month just ended there, this
+        # picks it up at the source rather than leaning on the store below.
+        cur = _glc_from_zip(_glc_current_zip(), lambda n: "Nominal daily" in n)
         out.update(cur)
     except Exception as e:                                         # noqa: BLE001
         log(f"UK: current-month GLC unavailable ({e}); archive only")
+    out = _store_merge(out)
     log(f"UK GLC: {len(out)} obs, latest {max(out) if out else 'n/a'}")
     return out
 
@@ -591,6 +635,29 @@ def build_context(us_nominal):
     return ctx, errors
 
 
+MAX_HISTORY_GAP_DAYS = 10   # holidays make gaps of a few days; Christmas ~5
+
+
+def contiguous_tail(dates, max_gap=MAX_HISTORY_GAP_DAYS):
+    """Drop the history sitting behind a hole, and say what was dropped.
+
+    A gap far larger than a holiday closure means sessions are missing, and
+    every lookback spanning it quietly measures the wrong window — a "1m" move
+    computed across a five-week void is not a 1m move. Serving a shorter series
+    that is true beats serving a longer one that is not, and beats serving
+    nothing at all while a publisher sorts itself out.
+    """
+    if len(dates) < 2:
+        return dates, None
+    for i in range(len(dates) - 1, 0, -1):
+        gap = (dt.date.fromisoformat(dates[i])
+               - dt.date.fromisoformat(dates[i - 1])).days
+        if gap > max_gap:
+            return dates[i:], {"from": dates[i], "after": dates[i - 1],
+                               "gap_days": gap, "dropped": i}
+    return dates, None
+
+
 # ------------------------------------------------------------- assemble -----
 MARKETS = [
     {"code": "US", "name": "United States", "flag": "US", "ccy": "USD",
@@ -651,7 +718,13 @@ def main():
         if not data:
             log(f"{code}: no data")
             continue
-        dates = sorted(data)
+        dates, cut = contiguous_tail(sorted(data))
+        if cut:
+            log(f"{code}: {cut['gap_days']}-day hole after {cut['after']}; "
+                f"history truncated to start {cut['from']}, "
+                f"{cut['dropped']} earlier session(s) dropped")
+            meta = dict(meta)
+            meta["history_truncated"] = cut
         tenors = [t for t in spec["tenors"] if any(t in data[d] for d in dates)]
         series = {t: [data[d].get(t) for d in dates] for t in tenors}
         m = {k: v for k, v in spec.items()}
@@ -688,6 +761,14 @@ def main():
     with open(path, "w") as f:
         json.dump(payload, f, separators=(",", ":"))
     log(f"wrote {path} ({os.path.getsize(path)/1e6:.2f} MB)")
+
+    truncated = [(m["code"], m["meta"]["history_truncated"]) for m in out_markets
+                 if (m.get("meta") or {}).get("history_truncated")]
+    if truncated and os.environ.get("GITHUB_ACTIONS"):
+        detail = " · ".join(
+            f"{c}: history starts {t['from']} after a {t['gap_days']}-day hole"
+            for c, t in truncated)
+        print(f"::warning title=History truncated::{detail}")
 
     # A missing context series is loud but not fatal; a missing market is both.
     if context_errors and os.environ.get("GITHUB_ACTIONS"):

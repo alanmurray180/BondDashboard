@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""One-off: seed uk_glc_store.json from a dashboard page built earlier.
+"""Seed uk_glc_store.json from a dashboard page built earlier. Run by hand.
 
 August 2026 fell out of both BoE files at the month rollover, and the store did
 not exist yet when it happened, so there was nothing to restore from. A page
 built before the rollover still carries the whole series in its embedded
 payload, which is enough to put the missing sessions back.
+
+The build ran this once, from the last pre-rollover artifact, and no longer
+does: it is a recovery tool, not part of the pipeline. Keep it — every page the
+site has ever served is a complete backup of the gilt history, and this is what
+reads one back in.
 
 Only ever adds dates the store lacks, so running it twice is harmless and it
 can never overwrite something the BoE has since restated.

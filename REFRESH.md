@@ -93,14 +93,26 @@ Three things address it instead:
 - `_store_merge()` unions each parse with the sessions earlier runs already
   saw, cached between runs. Fresh data always wins, so a revision is never
   resurrected; the store only supplies dates today's fetch does not carry
-- `contiguous_tail()` drops history sitting behind a hole rather than serving a
-  lookback measured across it. A "1m" move computed over a five-week void is
-  not a 1m move, and a shorter series that is true beats a longer one that is
-  not — and beats publishing nothing while a publisher sorts itself out. The
-  page names the market and the date its history starts
+- `gap_filled()` writes the missing sessions into the series as empty weekdays.
+  A lookback whose reference date lands in the hole finds a blank row and
+  returns nothing, instead of reaching back through it and reporting a
+  five-week move as a "1m". A lookback that clears the hole — the 3m, the 1y —
+  still lands on a real observation and answers normally, and the levels, the
+  charts and the rest of the history are untouched. The page names the market
+  and the dates that are missing
 
-The gap assertion below stays as the backstop: it now fires only if a hole
-survived truncation, which would mean a bug rather than a publisher.
+  This replaced a first attempt, `contiguous_tail()`, which threw away
+  everything behind the hole. That is far too blunt: on 2 September one gilt
+  session arrived before August had been restored, and truncating to the
+  contiguous tail discarded 1,492 good observations and emptied the UK panel.
+  Missing sessions are missing, not absent-from-history, and only the
+  comparisons that actually need them should be refused.
+
+- `seed_store.py` reads the store back out of any page the site has served:
+  each built page embeds its whole payload, so an old one is a complete backup
+  of the gilt history. The build ran it once from the last pre-rollover
+  artifact to recover August 2026 and no longer does — it is a recovery tool
+  to run by hand, not part of the pipeline
 
 ## The UK archive cache
 
@@ -119,13 +131,14 @@ when the file is 7+ days old by mtime, and the cache round-trip refreshes that
 mtime, so the expiry never fired. The key is now the ISO week with no
 restore-keys, making the first run of each week a deliberate miss.
 
-The workflow also asserts that no market has an interior gap of more than ten
-days across its last 90 observations. Holidays make gaps of a few days —
+An interior gap of more than ten days is reported by the workflow as a
+`::warning`, not an assertion failure. Holidays make gaps of a few days —
 Christmas and Easter run to about five — so a larger one means data has gone
-missing rather than the market having been shut. This fails the build: a page
-with a hole in it reports moves over the wrong window, which is worse than a
-page that does not update, and the freshness banner now makes the latter
-visible anyway.
+missing rather than the market having been shut, and that is worth knowing.
+It is no longer worth failing on: since `gap_filled()`, a hole cannot produce a
+move measured over the wrong window, so the page is accurate with the hole in
+it. The `asof` staleness assertion is what still fails the build, and it is the
+one that catches a market that has stopped publishing altogether.
 
 ## Why the schedule is redundant
 
@@ -178,6 +191,23 @@ bill for the US, which tracks the policy floor rather than the curve the prose
 describes, and a day and a month routinely point opposite ways. So the check
 uses the market's declared `key` pair (US 2s30s, UK 5s30s) and only objects when
 the data contradicts the word at *every* horizon it could have been quoted over.
+
+The noise floor and the contradiction test look at different sets, which is the
+subtle half. `DIR_MIN_BP` (1.5bp) decides whether there is a move here worth
+judging at all, so a curve that has not gone anywhere cannot contradict
+anything. But the contradiction itself is tested against every horizon that has
+a number, noise included — because the prose is entitled to describe a small
+move, and the horizon it describes must not be the one the noise filter threw
+away. Filtering first is what withheld the gilt read on 2 September 2026: the
+quarter was 0.8bp steeper, the sentence said so accurately, the filter dropped
+that horizon as noise, and the three flattening horizons that survived read as
+"flattened over every horizon". The prose no longer calls a sub-1.5bp quarter
+"steeper" either — it says the curve has gone nowhere — so the two halves agree
+about what counts as a direction.
+
+The words themselves are matched in the past tense too (`steepened`,
+`flattened`): a rule that only knew `steeper` and `steepening` waved a
+hand-written "the curve steepened" through unchecked.
 
 **The data window has two ends.** Publishers do not land together — the BoE GLC
 file is regularly a session behind the others — so a read is current if it is

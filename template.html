@@ -315,6 +315,7 @@ footer.foot b{color:var(--ink-2);font-weight:600}
   <p class="note">Change in basis points over each horizon. Shading is a fixed scale per column
     (see key below), so a colour means the same thing today as it will next month.
     Red = yields higher, blue = yields lower.</p>
+  <p class="note hidden" id="histNote"></p>
   <div class="tbl-scroll"><table class="grid" id="gridYields"></table></div>
   <div class="scale" id="scaleKey"></div>
 </section>
@@ -1220,9 +1221,25 @@ function renderFooter(){
 }
 
 /* ------------------------------------------------ orchestration */
+/* A market whose history was cut at a hole cannot answer the long horizons.
+   Say so next to the grid rather than leaving blank cells to be guessed at. */
+function renderHistoryNote(){
+  const host=$('#histNote');
+  const cut=M.filter(m=>m.meta && m.meta.history_truncated);
+  if(!cut.length){ host.classList.add('hidden'); return; }
+  host.classList.remove('hidden');
+  host.innerHTML='Limited history: '+cut.map(m=>{
+    const t=m.meta.history_truncated;
+    return `<b>${esc(m.code)}</b> starts ${esc(t.from)}, after a ${t.gap_days}-day `+
+           `gap the publisher has not filled`;
+  }).join(' · ')+'. Horizons reaching past that show no comparison point rather '+
+  'than a move measured across the gap.';
+}
+
 function renderAll(){
   buildRamp();
   renderFreshness();
+  renderHistoryNote();
   renderBrief(); buildTiles();
   renderYieldGrid(); renderSpreadGrid(); renderCrossGrid(); renderCtxGrid();
   renderScaleKey(); renderCross(); renderCurves(); renderTableView(); renderFooter();

@@ -71,6 +71,17 @@ jobs:
           path: glcnominalddata.zip
           key: glc-archive-${{ env.GLC_WEEK }}
 
+      # Sessions the BoE has served us before. Its archive and current-month
+      # file do not hand over cleanly at a month end, so this is what stops the
+      # gilt curve losing a month when they disagree. Always restore the newest
+      # and always write a new entry — unlike the archive, staleness is the
+      # whole point here.
+      - uses: actions/cache@v4
+        with:
+          path: uk_glc_store.json
+          key: uk-glc-store-${{ github.run_id }}
+          restore-keys: uk-glc-store-
+
       - name: Fetch curves
         run: python3 fetch_rates.py
         # exits non-zero if any market drops out, so a broken build fails loudly

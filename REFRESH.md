@@ -76,6 +76,32 @@ where both have an observation on the same date, and `Curve.common_latest()`
 gives the written commentary the same footing. The date can sit behind the
 fresher market; that is the honest answer, and the page says so.
 
+## The UK month-end hole
+
+The UK curve is assembled from two BoE downloads and they do not hand over
+cleanly. The archive is regenerated periodically and lags; the current-month
+file rolls on the 1st, a day or two late. On 2 Sep 2026 the current-month file
+became September while the archive still ended 31 July, so August existed in
+neither and the gilt series lost twenty-one sessions in a single run.
+
+Refreshing the archive more often does not fix this — that lag is the BoE's,
+not ours, which is what the weekly cache key got wrong when it was introduced.
+Three things address it instead:
+
+- every `Nominal daily` sheet in the latest zip is parsed, not only the one
+  named `current`, so a previous-month file is picked up if the BoE ships one
+- `_store_merge()` unions each parse with the sessions earlier runs already
+  saw, cached between runs. Fresh data always wins, so a revision is never
+  resurrected; the store only supplies dates today's fetch does not carry
+- `contiguous_tail()` drops history sitting behind a hole rather than serving a
+  lookback measured across it. A "1m" move computed over a five-week void is
+  not a 1m move, and a shorter series that is true beats a longer one that is
+  not — and beats publishing nothing while a publisher sorts itself out. The
+  page names the market and the date its history starts
+
+The gap assertion below stays as the backstop: it now fires only if a hole
+survived truncation, which would mean a bug rather than a publisher.
+
 ## The UK archive cache
 
 The UK curve is assembled from two BoE downloads: the ~39MB historical archive

@@ -1,0 +1,35 @@
+name = "bonddashboard-refresh"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+# Cloudflare cron is UTC-only, so this fires every hour at :40 across the span
+# the dashboard publishes in and the Worker decides which firings count. The
+# seven build windows are anchored to *London* local time (see src/index.js),
+# so the union of the BST and GMT possibilities is what has to be covered here
+# and three of these firings are always a deliberate no-op.
+[triggers]
+crons = ["40 6-22 * * 1-5"]
+
+[vars]
+GITHUB_OWNER = "alanmurray180"
+GITHUB_REPO = "BondDashboard"
+WORKFLOW_FILE = "build.yml"
+GIT_REF = "main"
+
+# Secrets are NOT set here — they never belong in the repo. Set them with:
+#   wrangler secret put GITHUB_TOKEN    (fine-grained PAT, Actions: read+write)
+#   wrangler secret put TRIGGER_KEY     (optional, for the manual endpoint)
+
+# Without this, the dashboard's stored logs stay empty and the Worker's only
+# visible output is a live stream you have to be watching at the time. At
+# seventeen firings a working day, sampling everything costs nothing.
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+persist = true
+
+[observability.traces]
+enabled = false
+head_sampling_rate = 1
+persist = true

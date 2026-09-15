@@ -5,3 +5,5 @@ glcnominalddata.zip
 _site/
 uk_glc_store.json
 seed/
+node_modules/
+.wrangler/

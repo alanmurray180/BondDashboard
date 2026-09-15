@@ -1,0 +1,10 @@
+{
+  "name": "bonddashboard-refresh",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "tail": "wrangler tail"
+  }
+}

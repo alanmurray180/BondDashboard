@@ -106,41 +106,10 @@ jobs:
         run: python3 build_dashboard.py
 
       - name: Sanity-check the output
-        run: |
-          python3 - <<'PY'
-          import json, sys, datetime as dt
-          d = json.load(open("rates.json"))
-          codes = {m["code"] for m in d["markets"]}
-          missing = {"US", "UK", "DE", "JP"} - codes
-          assert not missing, f"markets missing: {missing}"
-          today = dt.date.today()
-          for m in d["markets"]:
-              lag = (today - dt.date.fromisoformat(m["asof"])).days
-              assert lag <= 5, f"{m['code']} stale: as at {m['asof']}"
-          # A hole in the middle of a series no longer distorts anything: the
-          # missing weekdays are carried as blank rows, so a lookback landing in
-          # one returns nothing instead of a move measured across it, and the
-          # page names the dates. That makes an unfilled hole a thing to know
-          # about rather than a thing to fail on — the build below stays green
-          # and says so, and the staleness assert above still catches a market
-          # that has simply stopped publishing.
-          for m in d["markets"]:
-              for g in (m.get("meta") or {}).get("history_gaps") or []:
-                  print(f"::warning title=Missing sessions::{m['code']} has a "
-                        f"{g['days']}-day hole between {g['after']} and "
-                        f"{g['until']}; horizons reaching into it are blank")
-          errs = d.get("context_errors") or []
-          for e in errs:
-              print(f"context series unavailable: {e['series']} — {e['detail']}")
-          cm = d.get("commentary") or {}
-          if cm.get("suppressed"):
-              print("commentary: suppressed —", "; ".join(cm.get("reasons") or []))
-          elif cm.get("withheld"):
-              print("commentary: partial — withheld:",
-                    "; ".join(w["title"] for w in cm["withheld"]))
-          else:
-              print("commentary: published")
-          PY
+        run: python3 check_build.py
+        # Fails the build, and so skips the deploy, when a market is absent or
+        # a curve is stale beyond that market's own tolerance. Thresholds and
+        # the calendar reasoning behind them live in check_build.py.
 
       - name: Stage site
         run: |

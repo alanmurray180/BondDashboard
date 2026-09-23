@@ -17,8 +17,8 @@ import io
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOLKIT = ["fetch_rates.py", "write_commentary.py", "template.html",
-           "build_dashboard.py", "policy_rates.json", "commentary.json",
-           "REFRESH.md"]
+           "build_dashboard.py", "check_build.py", "policy_rates.json",
+           "commentary.json", "REFRESH.md"]
 
 
 def pack():

@@ -10,6 +10,7 @@ free official publisher; no API keys, no logins.
 | `fetch_rates.py` | pulls all curves, writes `rates.json` |
 | `template.html` | the dashboard shell (HTML/CSS/JS, no data) |
 | `build_dashboard.py` | injects `rates.json` + a copy of this toolkit into the template |
+| `check_build.py` | gates the built page: markets present, curves fresh enough |
 | `write_commentary.py` | writes `commentary.json` from the data, then reconciles it |
 | `policy_rates.json` | central bank rates shown on the tiles — **update by hand each month** |
 | `commentary.json` | the written read at the top of the page — written automatically, or by hand |
@@ -21,6 +22,7 @@ free official publisher; no API keys, no logins.
 python3 fetch_rates.py         # ~25s: US, UK, DE, JP. Exits non-zero if a market drops out.
 python3 write_commentary.py    # writes the read, then gates it against the data
 python3 build_dashboard.py     # writes bond_yield_monitor.html
+python3 check_build.py         # gates it: exits non-zero if it must not be published
 ```
 
 ## Cloud deployment
@@ -54,9 +56,9 @@ when running from a machine that can reach it; if the call fails it falls back t
 spot rather than dropping the market.
 
 **Failures must be loud.** `fetch_rates.py` exits non-zero if any market is
-missing, and the workflow asserts all four markets are present and no curve is
-more than five days stale. Without that a scheduled run reports success while
-serving a page with a market silently absent.
+missing, and `check_build.py` then asserts all four markets are present and no
+curve is stale. Without that a scheduled run reports success while serving a
+page with a market silently absent.
 
 Loud does not mean brittle, though. Every fetch retries twice through a
 transient upstream failure — 1.5s then 3s — because publishers have moments: on
@@ -76,6 +78,29 @@ When a publisher starts answering 200 with an interstitial instead of JSON,
 `json.loads` reports only "Expecting value: line 1 column 1". `get_json()`
 carries the status, content type, length and opening bytes into the error
 instead, which is the difference between a diagnosable failure and a guess.
+
+## Staleness is judged per market
+
+A market that has stopped publishing must fail the build. A market that is
+merely shut for a public holiday must not — it is the normal state of a
+calendar, and failing on it takes the page down with three healthy markets
+still on it.
+
+`check_build.py` therefore splits the two. Above `WARN_DAYS` (five) a curve is
+annotated on the run and the page still publishes; above that market's entry in
+`FAIL_DAYS` the build fails and the deploy is skipped, so Pages keeps serving
+the previous version.
+
+The limits are per market because the four do not keep the same calendar. US,
+UK and DE close for at most an Easter or Christmas/New Year weekend — four or
+five days, plus a session's publishing lag — so they fail at eight. Tokyo is
+the outlier: Golden Week shuts the JGB market for up to eight consecutive days
+and MOF's file has run a session behind besides, so JP fails at twelve.
+
+This is not hypothetical. Silver Week closed Tokyo from Saturday 19 to
+Wednesday 23 September 2026. The old flat five-day rule tripped on the 23rd
+with US, UK and DE all current, and the page froze on the previous day's build
+until Japan reopened.
 
 ## Cross-market figures are quoted on a common date
 

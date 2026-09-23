@@ -64,6 +64,13 @@ dashboard forms, and a push redeploys.
 > and the one that is easy to miss. Everything else is read from
 > `wrangler.toml`.
 
+> **Keep `name` in `wrangler.toml` equal to the Worker's name in Cloudflare.**
+> The cron trigger and the secrets attach to a named Worker, so if the two
+> disagree, `wrangler deploy` creates a second Worker under the other name —
+> leaving the cron firing on one and `GITHUB_TOKEN` set on the other. Each looks
+> healthy on its own and nothing ever dispatches. It is currently
+> `bonddashboard`; rename both together or neither.
+
 In the Cloudflare dashboard, create a Worker from your Git repository, then
 under the Worker's **Settings → Build** (labels move around; the field is
 sometimes behind an "Advanced" toggle):
@@ -136,7 +143,7 @@ Trigger it by hand without waiting for the cron — this is also the "rebuild no
 button that a public static page cannot safely have:
 
 ```bash
-curl -X POST https://bonddashboard-refresh.<your-subdomain>.workers.dev/ \
+curl -X POST https://bonddashboard.<your-subdomain>.workers.dev/ \
      -H "X-Trigger-Key: <your TRIGGER_KEY>"
 ```
 

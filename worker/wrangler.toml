@@ -1,4 +1,9 @@
-name = "bonddashboard-refresh"
+# Must match the Worker this repository is connected to in Cloudflare, which
+# is what the cron trigger and the secrets are attached to. A mismatch is
+# quiet and nasty: `wrangler deploy` would create a SECOND Worker under the
+# other name, and you would end up with the cron firing on one and
+# GITHUB_TOKEN set on the other, both looking healthy in isolation.
+name = "bonddashboard"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
 

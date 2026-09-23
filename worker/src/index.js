@@ -41,6 +41,27 @@ export const SLOTS = {
 };
 
 /**
+ * The instant a firing is for, as a Date.
+ *
+ * Cloudflare documents ScheduledEvent.scheduledTime as epoch milliseconds, but
+ * the value carried into the logs is in seconds, and a seconds value read as
+ * milliseconds lands in January 1970 — a date whose weekday and hour match no
+ * slot below. The Worker would then skip every firing, for ever, while logging
+ * outcome "ok" on each one: the page would simply stop refreshing and nothing
+ * would look broken. Normalising costs two lines and removes the whole class.
+ *
+ * 1e11 separates the two cleanly — as milliseconds it is 1973, as seconds it is
+ * the year 5138 — so no timestamp this Worker will ever see is ambiguous. If
+ * the field is missing or unusable, fall back to now: Cloudflare fires
+ * punctually, so now is within seconds of the slot anyway.
+ */
+export function scheduledDate(event) {
+  const t = Number(event?.scheduledTime);
+  if (!Number.isFinite(t) || t <= 0) return new Date();
+  return new Date(t < 1e11 ? t * 1000 : t);
+}
+
+/**
  * Weekday and hour in London, so BST and GMT need no special handling.
  */
 export function londonParts(date) {
@@ -107,7 +128,7 @@ export async function dispatchWorkflow(env, reason) {
 
 export default {
   async scheduled(event, env, ctx) {
-    const now = new Date(event.scheduledTime);
+    const now = scheduledDate(event);
     const { weekday, hour } = londonParts(now);
     const slot = slotFor(now);
 

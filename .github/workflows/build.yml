@@ -2,17 +2,23 @@ name: Build bond yield monitor
 
 on:
   schedule:
-    # Weekdays. The 06:40 window catches the BoE GLC current-month file
-    # (published ~08:00 London) from the prior session; the 16:40 one picks up
-    # the Bundesbank same-day curve before the US close.
+    # This is the BACKSTOP, not the schedule. The real one is the Cloudflare
+    # Worker in worker/, which calls workflow_dispatch below at seven windows a
+    # working day anchored to London local time.
     #
-    # The intermediate windows are deliberate redundancy, not extra coverage.
-    # GitHub's scheduler is best-effort: firings are delayed under load and
-    # dropped outright when the delay runs long. Through late August 2026 the
-    # delay grew from ~30 minutes to 8+ hours, whole firings went missing, and
-    # the page sat three days stale under a green tick. A build is ~40s and the
-    # deploy is idempotent, so a dropped firing simply gets picked up by the
-    # next one rather than waiting half a day.
+    # GitHub's scheduler is best-effort and, through late August 2026, not good
+    # enough to carry this page on its own: the delay grew from ~30 minutes to
+    # 8+ hours, whole firings went missing, and the page sat three days stale
+    # under a green tick. Extra windows helped but cannot fix a scheduler that
+    # stops delivering. These slots are kept anyway because they cost nothing
+    # on a public repo and a duplicate build is harmless — a build is ~40s and
+    # the deploy is idempotent.
+    #
+    # They stay pinned to UTC and so drift an hour against the publishers each
+    # winter; the Worker is the one that holds the windows where they were
+    # tuned. The 06:40 window catches the BoE GLC current-month file (published
+    # ~08:00 London) from the prior session; the 16:40 one picks up the
+    # Bundesbank same-day curve before the US close.
     - cron: "40 6 * * 1-5"
     - cron: "40 8 * * 1-5"
     - cron: "40 11 * * 1-5"
@@ -30,9 +36,13 @@ permissions:
   pages: write
   id-token: write
 
+# Never let two builds race to deploy, but let a running build finish rather
+# than cancelling it. The Worker's dispatch and the backstop cron above can land
+# in the same minute, and cancelling would abort one of them part-way through
+# the deploy — losing a genuine refresh to a duplicate of itself.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:

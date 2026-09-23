@@ -25,9 +25,25 @@ python3 build_dashboard.py     # writes bond_yield_monitor.html
 
 ## Cloud deployment
 
-`.github/workflows/build.yml` runs the three steps twice each weekday and
-publishes to GitHub Pages. Two things matter for anything running off a
-datacentre IP:
+`.github/workflows/build.yml` runs the three steps and publishes to GitHub
+Pages. It builds at seven windows each weekday.
+
+**The schedule is a Cloudflare Worker, not GitHub cron.** GitHub's scheduler is
+best-effort and proved unable to carry this page: through late August 2026 the
+delay grew from ~30 minutes to 8+ hours, whole firings went missing, and the
+page sat three days stale under a green tick. `workflow_dispatch` has succeeded
+on every attempt, so the schedule lives in [`worker/`](worker/README.md) and
+GitHub is only asked to run the build. The `schedule:` block stays in the
+workflow as a free backstop — duplicate builds are harmless and the
+`concurrency` group serialises them.
+
+The Worker's windows are anchored to London local time, which the UTC crons in
+the workflow cannot be. Every publisher works to a local clock, so a UTC-pinned
+schedule sits an hour early against all of them each winter — tight enough, in
+the evening US window, to miss the Treasury post. See `worker/README.md` for the
+window table and the one-time setup.
+
+Two things matter for anything running off a datacentre IP:
 
 **The BoE IADB endpoint is blocked.** `_iadb-fromshowcolumns.asp` returns HTTP 200
 with an "Access denied" page and a WAF reference id from cloud ranges, so the par

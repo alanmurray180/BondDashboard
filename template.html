@@ -358,6 +358,19 @@ footer.foot b{color:var(--ink-2);font-weight:600}
 </section>
 
 <section class="card">
+  <h2 id="shTitle">Curve spread history</h2>
+  <p class="note" id="shNote"></p>
+  <div class="ctrl" role="group" aria-label="Curve spread chart controls">
+    <div class="fgroup"><span class="flabel">Spread</span><span id="shPresetChips"></span></div>
+    <div class="fgroup"><span class="flabel">Short leg</span><span id="shShortChips"></span></div>
+    <div class="fgroup"><span class="flabel">Long leg</span><span id="shLongChips"></span></div>
+    <div class="fgroup"><span class="flabel">Range</span><span id="shRangeChips"></span></div>
+  </div>
+  <div id="spreadChart"></div>
+  <div class="legend" id="spreadLegend"></div>
+</section>
+
+<section class="card">
   <h2>Curve shape versus history</h2>
   <p class="note">Today's curve against the same curve one month, three months and one year ago.
     Where the lines fan out at the long end and sit together at the front, the move is term
@@ -401,10 +414,15 @@ const HORIZONS = [
   {k:'5y',  lbl:'5y',  kind:'cal',  d:1826,cap:450}
 ];
 const RANGES=[{k:'1m',d:30},{k:'3m',d:91},{k:'6m',d:182},{k:'1y',d:365},{k:'3y',d:1096},{k:'5y',d:1826}];
+// the spread chart goes back as far as the data does
+const SH_RANGES=RANGES.concat([{k:'Max',d:1e6}]);
 const state = {
   markets: new Set(M.map(m=>m.code)),
   range: '1y',
   tenor: '30Y',
+  shShort: '2Y',
+  shLong: '30Y',
+  shRange: '5y',
   table: false
 };
 
@@ -653,16 +671,34 @@ function lineChart(host, series, opts){
     if(s.dash) p.setAttribute('opacity','.9');
     svg.appendChild(p);
   });
-  // end dots + direct labels
-  live.forEach(s=>{
-    if(s.label===false) return;
+  // end dots + direct labels. Series that finish close together would print
+  // their labels on top of each other, so the labels are spread to a minimum
+  // gap (keeping their order) and a leader ties any moved label to its dot.
+  const LBL_GAP=13;
+  const labs=live.filter(s=>s.label!==false).map(s=>{
     const last=s.pts[s.pts.length-1];
+    return {s, last, x:X(last[0]), y:Y(last[1]), ly:Y(last[1])};
+  }).sort((a,b)=>a.y-b.y);
+  const top=pad.t+4, bot=H-pad.b-2;
+  for(let i=0;i<labs.length;i++){
+    labs[i].ly=Math.max(labs[i].ly, top, i? labs[i-1].ly+LBL_GAP : -Infinity);
+  }
+  for(let i=labs.length-1;i>=0;i--){
+    labs[i].ly=Math.min(labs[i].ly, i<labs.length-1? labs[i+1].ly-LBL_GAP : bot);
+  }
+  labs.forEach(({s,last,x,y,ly})=>{
     const c=document.createElementNS(ns,'circle');
-    c.setAttribute('cx',X(last[0]));c.setAttribute('cy',Y(last[1]));c.setAttribute('r','4');
+    c.setAttribute('cx',x);c.setAttribute('cy',y);c.setAttribute('r','4');
     c.setAttribute('fill',s.colour);c.setAttribute('stroke','var(--surface-1)');c.setAttribute('stroke-width','2');
     svg.appendChild(c);
+    if(Math.abs(ly-y)>2){
+      const ld=document.createElementNS(ns,'path');
+      ld.setAttribute('d',`M${(x+5).toFixed(1)} ${y.toFixed(1)} L${(x+9).toFixed(1)} ${ly.toFixed(1)}`);
+      ld.setAttribute('stroke',s.colour);ld.setAttribute('stroke-width','1');ld.setAttribute('fill','none');
+      svg.appendChild(ld);
+    }
     const t=document.createElementNS(ns,'text');
-    t.setAttribute('x',X(last[0])+8);t.setAttribute('y',Y(last[1])+3.5);
+    t.setAttribute('x',x+(Math.abs(ly-y)>2?11:8));t.setAttribute('y',ly+3.5);
     t.setAttribute('fill','var(--ink-2)');t.setAttribute('font-size','11');t.setAttribute('font-weight','600');
     t.setAttribute('style','font-variant-numeric:tabular-nums');
     t.textContent=s.name+' '+(opts.yfmt||(z=>z.toFixed(2)))(last[1]);
@@ -747,6 +783,46 @@ function buildChips(){
     b.setAttribute('aria-pressed', state.tenor===t);
     b.onclick=()=>{state.tenor=t; buildChips(); renderCross();};
     tc.appendChild(b);
+  });
+}
+
+/* ------------------------------------------------ build: spread-history chips */
+function tenorYears(t){ return parseFloat(t)*(t.endsWith('M')?1/12:1); }
+// 2Y/30Y -> 2s30s, 3M/10Y -> 3m10s
+function spreadName(a,b){ const f=t=>t.endsWith('M')? parseFloat(t)+'m' : parseFloat(t)+'s'; return f(a)+f(b); }
+function buildSpreadChips(){
+  const tens=[...new Set(M.flatMap(m=>m.tenors))].sort((a,b)=>tenorYears(a)-tenorYears(b));
+  const pick=(hostSel, key, ok)=>{
+    const host=$(hostSel); host.innerHTML='';
+    tens.forEach(t=>{
+      const b=el('button','chip',t);
+      b.setAttribute('aria-pressed', state[key]===t);
+      b.disabled=!ok(t);
+      if(b.disabled) b.style.opacity='.35';
+      b.onclick=()=>{ state[key]=t; buildSpreadChips(); renderSpreadHistory(); };
+      host.appendChild(b);
+    });
+  };
+  pick('#shShortChips','shShort', t=>tenorYears(t)<tenorYears(state.shLong));
+  pick('#shLongChips','shLong', t=>tenorYears(t)>tenorYears(state.shShort));
+  const pc=$('#shPresetChips'); pc.innerHTML='';
+  const seen=new Set(), presets=[];
+  M.forEach(m=>(m.spreads||[]).concat([m.key]).forEach(([a,b])=>{
+    const k=a+'/'+b; if(!seen.has(k)){ seen.add(k); presets.push([a,b]); }
+  }));
+  presets.sort((x,y)=>tenorYears(x[0])-tenorYears(y[0]) || tenorYears(x[1])-tenorYears(y[1]))
+    .forEach(([a,b])=>{
+      const c=el('button','chip',spreadName(a,b));
+      c.setAttribute('aria-pressed', state.shShort===a && state.shLong===b);
+      c.onclick=()=>{ state.shShort=a; state.shLong=b; buildSpreadChips(); renderSpreadHistory(); };
+      pc.appendChild(c);
+    });
+  const rc=$('#shRangeChips'); rc.innerHTML='';
+  SH_RANGES.forEach(r=>{
+    const b=el('button','chip',r.k);
+    b.setAttribute('aria-pressed', state.shRange===r.k);
+    b.onclick=()=>{ state.shRange=r.k; buildSpreadChips(); renderSpreadHistory(); };
+    rc.appendChild(b);
   });
 }
 
@@ -927,6 +1003,33 @@ function renderCross(){
   const lg=$('#crossLegend'); lg.innerHTML='';
   act.forEach(m=>lg.appendChild(el('span','it',
     `<span class="k" style="background:var(--m-${m.code})"></span>${m.name}`)));
+}
+function renderSpreadHistory(){
+  const host=$('#spreadChart');
+  const a=state.shShort, b=state.shLong, nm=spreadName(a,b);
+  const days=(SH_RANGES.find(r=>r.k===state.shRange)||{d:1826}).d;
+  const sel=M.filter(m=>state.markets.has(m.code));
+  const act=sel.filter(m=>m.tenors.includes(a)&&m.tenors.includes(b));
+  const miss=sel.filter(m=>!act.includes(m)).map(m=>m.code);
+  $('#shTitle').textContent = `${nm} curve spread history`;
+  const series=act.map(m=>{
+    const s=spreadSeries(m,a,b);
+    const L=lastValid(s); if(!L) return {pts:[]};
+    const from=shiftDays(L.d,days), pts=[];
+    for(let i=0;i<s.dates.length;i++) if(s.dates[i]>=from && s.vals[i]!=null) pts.push([toDay(s.dates[i]), s.vals[i]*100]);
+    return {name:m.code, colour:cssv('--m-'+m.code), pts};
+  });
+  const live=series.filter(s=>s.pts.length>1);
+  const first=live.length? fromDay(Math.min(...live.map(s=>s.pts[0][0]))) : null;
+  $('#shNote').textContent = act.length
+    ? `${b} minus ${a}, in basis points, daily, ${state.shRange==='Max'? 'full history from '+labelDay(toDay(first||M[0].dates[0])) : 'last '+state.shRange}. Above zero is an upward-sloping curve; rising means steepening.`+
+      (miss.length? ` Not shown: ${miss.join(', ')} (no ${a} or ${b} point).` : '')
+    : `No selected market publishes both a ${a} and a ${b} point.`;
+  lineChart(host, series, {h:330, padR:96, yfmt:v=>Math.round(v)+'bp', xlabel:labelDay,
+    aria:`${nm} government curve spread history for selected markets`});
+  const lg=$('#spreadLegend'); lg.innerHTML='';
+  act.forEach(m=>lg.appendChild(el('span','it',
+    `<span class="k" style="background:var(--m-${m.code})"></span>${m.name} ${nm}`)));
 }
 const AGES=[{lbl:'Now',d:0,c:'--ord-0'},{lbl:'1m ago',d:30,c:'--ord-1'},
             {lbl:'3m ago',d:91,c:'--ord-2'},{lbl:'1y ago',d:365,c:'--ord-3'}];
@@ -1260,7 +1363,7 @@ function renderAll(){
   renderHistoryNote();
   renderBrief(); buildTiles();
   renderYieldGrid(); renderSpreadGrid(); renderCrossGrid(); renderCtxGrid();
-  renderScaleKey(); renderCross(); renderCurves(); renderTableView(); renderFooter();
+  renderScaleKey(); renderCross(); renderSpreadHistory(); renderCurves(); renderTableView(); renderFooter();
 }
 $('#themeBtn').onclick=()=>{
   const d=document.documentElement.getAttribute('data-theme')==='dark';
@@ -1274,13 +1377,14 @@ $('#tblBtn').onclick=()=>{
   $('#tableView').classList.toggle('hidden',!state.table);
   if(state.table) $('#tableView').scrollIntoView({behavior:'smooth',block:'start'});
 };
-let rt; addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(()=>{renderCross();renderCurves();},180);});
+let rt; addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(()=>{renderCross();renderSpreadHistory();renderCurves();},180);});
 
 $('#stamp').textContent =
   M.map(m=>`${m.code} ${labelDay(toDay(m.asof))}`).join('  ·  ') +
   '   ·   built ' + DATA.generated.slice(0,10) +
   (DATA.generated? ' (' + agoWords(new Date(DATA.generated), new Date()) + ')' : '');
 buildChips();
+buildSpreadChips();
 renderAll();
 })();
 </script>

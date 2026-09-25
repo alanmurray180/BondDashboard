@@ -671,16 +671,34 @@ function lineChart(host, series, opts){
     if(s.dash) p.setAttribute('opacity','.9');
     svg.appendChild(p);
   });
-  // end dots + direct labels
-  live.forEach(s=>{
-    if(s.label===false) return;
+  // end dots + direct labels. Series that finish close together would print
+  // their labels on top of each other, so the labels are spread to a minimum
+  // gap (keeping their order) and a leader ties any moved label to its dot.
+  const LBL_GAP=13;
+  const labs=live.filter(s=>s.label!==false).map(s=>{
     const last=s.pts[s.pts.length-1];
+    return {s, last, x:X(last[0]), y:Y(last[1]), ly:Y(last[1])};
+  }).sort((a,b)=>a.y-b.y);
+  const top=pad.t+4, bot=H-pad.b-2;
+  for(let i=0;i<labs.length;i++){
+    labs[i].ly=Math.max(labs[i].ly, top, i? labs[i-1].ly+LBL_GAP : -Infinity);
+  }
+  for(let i=labs.length-1;i>=0;i--){
+    labs[i].ly=Math.min(labs[i].ly, i<labs.length-1? labs[i+1].ly-LBL_GAP : bot);
+  }
+  labs.forEach(({s,last,x,y,ly})=>{
     const c=document.createElementNS(ns,'circle');
-    c.setAttribute('cx',X(last[0]));c.setAttribute('cy',Y(last[1]));c.setAttribute('r','4');
+    c.setAttribute('cx',x);c.setAttribute('cy',y);c.setAttribute('r','4');
     c.setAttribute('fill',s.colour);c.setAttribute('stroke','var(--surface-1)');c.setAttribute('stroke-width','2');
     svg.appendChild(c);
+    if(Math.abs(ly-y)>2){
+      const ld=document.createElementNS(ns,'path');
+      ld.setAttribute('d',`M${(x+5).toFixed(1)} ${y.toFixed(1)} L${(x+9).toFixed(1)} ${ly.toFixed(1)}`);
+      ld.setAttribute('stroke',s.colour);ld.setAttribute('stroke-width','1');ld.setAttribute('fill','none');
+      svg.appendChild(ld);
+    }
     const t=document.createElementNS(ns,'text');
-    t.setAttribute('x',X(last[0])+8);t.setAttribute('y',Y(last[1])+3.5);
+    t.setAttribute('x',x+(Math.abs(ly-y)>2?11:8));t.setAttribute('y',ly+3.5);
     t.setAttribute('fill','var(--ink-2)');t.setAttribute('font-size','11');t.setAttribute('font-weight','600');
     t.setAttribute('style','font-variant-numeric:tabular-nums');
     t.textContent=s.name+' '+(opts.yfmt||(z=>z.toFixed(2)))(last[1]);

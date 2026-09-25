@@ -12,8 +12,24 @@ compatibility_date = "2026-09-01"
 # seven build windows are anchored to *London* local time (see src/index.js),
 # so the union of the BST and GMT possibilities is what has to be covered here
 # and three of these firings are always a deliberate no-op.
+#
+# THE HOUR RANGE MUST STAY 6-22. It is not the working day — it is the span of
+# UTC hours that can map to one of the seven London windows under either offset.
+# Narrowing it to 7-17 (the range a sibling dashboard uses, whose windows are a
+# contiguous 08:30-17:30 London) silently drops three slots in BST — 07:40,
+# 20:40 and 22:40 London — including the 22:40 one that carries the US Treasury
+# par curve, the whole point of the evening build. The Worker's gate, not this
+# range, is what decides which firings count, so a wider range costs nothing but
+# a few no-op invocations.
+#
+# Day names rather than 1-5: equivalent here, and unambiguous about which end of
+# the week is meant. Both forms were verified firing all seven slots.
+#
+# EDIT THIS FILE, NEVER THE CRON IN THE CLOUDFLARE DASHBOARD. Workers Builds
+# applies [triggers] from this file on every deploy, so a dashboard edit is
+# silently reverted by the next push to main.
 [triggers]
-crons = ["40 6-22 * * 1-5"]
+crons = ["40 6-22 * * MON-FRI"]
 
 [vars]
 GITHUB_OWNER = "alanmurray180"

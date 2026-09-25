@@ -19,8 +19,8 @@ group serialises them, and Actions is free on a public repo.
 
 ## What it does
 
-Fires `40 6-22 * * 1-5` UTC and builds on seven of those firings — the windows
-below, anchored to **London local time**:
+Fires `40 6-22 * * MON-FRI` UTC and builds on seven of those firings — the
+windows below, anchored to **London local time**:
 
 | London | Window |
 | --- | --- |
@@ -47,6 +47,19 @@ inside the Worker. Gating here is safe in a way it was not inside the GitHub
 workflow: Cloudflare fires punctually, so the gate rejects only the slot it is
 meant to, not a genuine refresh that arrived late. Ten firings a day are
 deliberate no-ops and log as `skipped:`.
+
+### Do not narrow the hour range, and do not edit the cron in the dashboard
+
+`6-22` is not the working day. It is the span of UTC hours that can map to one of
+the seven London windows under either offset, and the Worker's gate — not the
+range — decides which firings count. A wider range costs only a few no-op
+invocations; a narrower one silently loses windows. Narrowing to `7-17` drops
+07:40, 20:40 and 22:40 London in BST, taking the US Treasury par-curve build
+with it, and nothing in the logs says so: the remaining firings all look healthy.
+
+Change the cron **here**, never in the Cloudflare dashboard. Workers Builds
+applies `[triggers]` from `wrangler.toml` on every deploy, so a dashboard edit
+survives only until the next push to `main` and then reverts without warning.
 
 ## Deploy
 

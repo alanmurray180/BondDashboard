@@ -295,7 +295,7 @@ it, and untar the result.)
 | DE | Deutsche Bundesbank | BBSIS `D.I.ZST.ZI.EUR.S1311.B.A604.R{nn}XX.R.A.A._Z._Z.A` | 1Y–30Y | T+0 |
 | JP | Japan MOF | `historical/jgbcme_all.csv` + `jgbcme.csv` | 1Y–40Y | T+0 |
 | US real | US Treasury | daily **real** yield curve XML (TIPS), one call per year | 5Y–30Y | T+0 evening |
-| Gold | LBMA | `https://prices.lbma.org.uk/json/gold_pm.json` (PM auction, USD/GBP/EUR) | — | T+0 |
+| Gold | COMEX via Yahoo Finance | `query1.finance.yahoo.com/v8/finance/chart/GC=F`, front-month futures close, USD (LBMA PM fix until 1 Oct 2026, when LBMA began blocking GitHub and Cloudflare) | — | T+0 after 13:30 New York |
 
 Breakeven inflation is derived, not fetched: nominal par yield less real par yield
 at the same tenor on the same date, both from the Treasury, so there is no

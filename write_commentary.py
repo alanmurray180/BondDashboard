@@ -110,6 +110,21 @@ class Curve:
             return None
         return (ser[-1] - ser[j]) * 100
 
+    def change_1d_on(self, code, tenor, day):
+        """The session move ending on `day`, against the observation before it."""
+        m = self.m.get(code)
+        if not m or tenor not in m["series"] or day is None:
+            return None
+        ser = m["series"][tenor]
+        i = self._index(m["dates"], day)
+        if i is None or m["dates"][i] != day:
+            return None
+        prev = (dt.date.fromisoformat(day) - dt.timedelta(days=1)).isoformat()
+        j = self._index(m["dates"], prev)
+        if j is None or ser[i] is None or ser[j] is None:
+            return None
+        return (ser[i] - ser[j]) * 100
+
     def spread(self, code, short, long_, day=None):
         a = self.level(code, short, day)
         b = self.level(code, long_, day)
@@ -384,6 +399,41 @@ def write_gold(cv):
     }
 
 
+def _headline(cv):
+    """The two long ends, read on a session both of them traded.
+
+    The BoE publishes a session behind the Treasury, so the two latest 1d moves
+    are routinely different days; set side by side, a US session can look like
+    it moved "with" a gilt session it never met. Below the noise floor a long
+    end has not moved, and two of those are a quiet day, not a common bid.
+    """
+    day = cv.common_latest("US", "UK")
+    us = cv.change_1d_on("US", "30Y", day)
+    uk = cv.change_1d_on("UK", "30Y", day)
+    if us is None or uk is None:
+        return "Curve read for the last session."
+    us_asof = (cv.m.get("US") or {}).get("asof")
+    when = "" if day == us_asof else f" on {day}"
+    us_txt, uk_txt = f"the US 30y {_chg(us)}", f"the gilt 30y {_chg(uk)}"
+    us_moved, uk_moved = abs(us) >= DIR_MIN_BP, abs(uk) >= DIR_MIN_BP
+
+    if not us_moved and not uk_moved:
+        both = (f"US and gilt 30y yields were both little changed"
+                if abs(us) < 1 and abs(uk) < 1 else f"{us_txt} and {uk_txt}")
+        return (f"A quiet session for the long ends{when}: {both}, "
+                f"so there is no duration signal to read.")
+    if us_moved != uk_moved:
+        mover, still = (us_txt, uk_txt) if us_moved else (uk_txt, us_txt)
+        return (f"The long-end move was local{when}: {mover} while {still}.")
+    if (us > 0) == (uk > 0):
+        what = ("a common selloff in duration" if us > 0
+                else "a common duration bid")
+        return (f"Long ends moved together{when}: {us_txt} and {uk_txt}, "
+                f"pointing at {what} rather than anything domestic.")
+    return (f"The two long ends parted company{when}: {us_txt} while "
+            f"{uk_txt}, so the driver is local rather than global.")
+
+
 def compose(payload):
     cv = Curve(payload)
     _, asof = cv.data_window()
@@ -391,23 +441,7 @@ def compose(payload):
     if not sections:
         return {}
 
-    us_1d_30 = cv.change_bp("US", "30Y", "1d")
-    uk_1d_30 = cv.change_bp("UK", "30Y", "1d")
-    if us_1d_30 is not None and uk_1d_30 is not None:
-        same = (us_1d_30 > 0) == (uk_1d_30 > 0)
-        headline = (
-            f"Long ends moved together: the US 30y "
-            f"{_chg(us_1d_30)} and the "
-            f"gilt 30y {_chg(uk_1d_30)}, "
-            f"pointing at a common duration bid rather than anything domestic."
-            if same else
-            f"The two long ends parted company: the US 30y "
-            f"{_chg(us_1d_30)} while the "
-            f"gilt 30y {_chg(uk_1d_30)}, "
-            f"so the driver is local rather than global."
-        )
-    else:
-        headline = "Curve read for the last session."
+    headline = _headline(cv)
 
     uk = cv.m.get("UK", {})
     foot = ("Written automatically from the published curves; every figure is "

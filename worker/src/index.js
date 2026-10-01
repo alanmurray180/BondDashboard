@@ -126,6 +126,49 @@ export async function dispatchWorkflow(env, reason) {
   return { ok: false, status: resp.status, detail };
 }
 
+/**
+ * LBMA's price JSON, fetched from Cloudflare rather than from GitHub's runners.
+ *
+ * prices.lbma.org.uk answers 403 to GitHub Actions IPs (from 1 October 2026 at
+ * the latest), which is the same datacentre block the BoE IADB applies, and
+ * it took the gold panel and the gold read off the page. The build asks this
+ * Worker first and falls back to LBMA direct, then to a second source.
+ *
+ * Only the one fixed upstream URL is ever fetched, so this is not an open
+ * proxy, and it needs no key: the data is public. Cached for 15 minutes at the
+ * edge so seven builds a day, plus retries, are a handful of upstream hits.
+ */
+export const GOLD_UPSTREAM = "https://prices.lbma.org.uk/json/gold_pm.json";
+
+export async function proxyGold() {
+  let resp;
+  try {
+    resp = await fetch(GOLD_UPSTREAM, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+          "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+      },
+      cf: { cacheTtl: 900, cacheEverything: true },
+    });
+  } catch (e) {
+    return new Response(`upstream fetch failed: ${e}\n`, { status: 502 });
+  }
+  // Pass a block or an outage through as 502 with the upstream status, so the
+  // build logs say "LBMA blocked Cloudflare too" rather than a bare failure.
+  if (!resp.ok) {
+    return new Response(`upstream answered ${resp.status}\n`, { status: 502 });
+  }
+  return new Response(resp.body, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "public, max-age=900",
+    },
+  });
+}
+
 export default {
   async scheduled(event, env, ctx) {
     const now = scheduledDate(event);
@@ -141,11 +184,15 @@ export default {
   },
 
   /**
-   * Manual trigger, for testing the Worker without waiting for the cron.
+   * GET /gold is the LBMA passthrough above; anything else is the manual
+   * trigger, for testing the Worker without waiting for the cron.
    * Requires the TRIGGER_KEY secret, so the endpoint being public does not
    * mean anyone can spend your Actions minutes.
    */
   async fetch(request, env) {
+    if (request.method === "GET" && new URL(request.url).pathname === "/gold") {
+      return proxyGold();
+    }
     if (request.method !== "POST") {
       return new Response("POST with X-Trigger-Key to rebuild\n", {
         status: 405,

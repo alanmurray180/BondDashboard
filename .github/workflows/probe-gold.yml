@@ -1,25 +1,23 @@
-# TEMPORARY: probes gold sources from a GitHub runner. Remove before merge.
+# TEMPORARY: runs the gold fetch from a GitHub runner. Remove before merge.
 name: Probe gold sources
 on:
   push:
     branches: [claude/determined-galileo-3d04cu]
-    paths: [.github/workflows/probe-gold.yml]
+    paths: [.github/workflows/probe-gold.yml, fetch_rates.py]
 jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
       - run: |
-          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
-          for u in \
-            "https://prices.lbma.org.uk/json/gold_pm.json" \
-            "https://stooq.com/q/d/l/?s=xauusd&i=d" \
-            "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?range=1mo&interval=1d" \
-            "https://query2.finance.yahoo.com/v8/finance/chart/XAUUSD=X?range=1mo&interval=1d" \
-            "https://fred.stlouisfed.org/graph/fredgraph.csv?id=GOLDPMGBD228NLBM" \
-            "https://api.gold-api.com/price/XAU" \
-            "https://data-asg.goldprice.org/dbXRates/USD" \
-            "https://freegoldapi.com/data/latest.json" ; do
-            echo "=== $u"
-            curl -sS -m 30 -A "$UA" -o body -w "HTTP %{http_code} %{content_type} %{size_download}B\n" "$u" || true
-            head -c 300 body; echo; tail -c 200 body; echo
-          done
+          python3 - <<'PY'
+          import fetch_rates as f, write_commentary as w
+          rows, src = f.fetch_gold()
+          d = sorted(rows)
+          print(src, len(d), d[0], d[-1], [rows[x] for x in d[-5:]])
+          ctx = {"gold": {**f.GOLD_SOURCES[src], "dates": d, "tenors": ["USD"],
+                          "series": {"USD": [rows[x]["USD"] for x in d]}}}
+          print(w.write_gold(w.Curve({"markets": [], "context": ctx})))
+          PY

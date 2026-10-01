@@ -191,3 +191,20 @@ are included. This uses seventeen invocations a working day.
 - Dispatches succeed but the page is still stale → the failure is in the build,
   not the trigger. Check the Actions run: `fetch_rates.py` exits non-zero if any
   market drops out, and the page is not deployed when it does.
+
+## Gold passthrough (`GET /gold`)
+
+LBMA's price JSON answers 403 to GitHub's runners, so the build cannot fetch
+the gold PM fix itself. `GET /gold` on this Worker fetches
+`https://prices.lbma.org.uk/json/gold_pm.json` from Cloudflare (cached 15 min)
+and returns it unchanged; it fetches that one URL only, so it is not an open
+proxy, and needs no key.
+
+To switch it on, add a repository **variable** (Settings → Secrets and
+variables → Actions → Variables) named `GOLD_PROXY_URL` set to
+`https://<worker-name>.<account>.workers.dev/gold`.
+
+If the Worker is not set up, or LBMA blocks Cloudflare too (it answers 502
+with the upstream status), the build falls back to LBMA direct and then to
+COMEX front-month futures. The fallback is never spliced with the fix, and the
+page, the read and the run's warnings all say which source was used.

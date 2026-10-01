@@ -550,9 +550,27 @@ def fetch_us_real():
     return out
 
 
-def fetch_gold():
-    """LBMA Gold Price PM auction — the settlement benchmark, USD/GBP/EUR."""
-    raw = get_json("https://prices.lbma.org.uk/json/gold_pm.json")
+LBMA_GOLD = "https://prices.lbma.org.uk/json/gold_pm.json"
+# The refresh Worker's /gold passthrough (worker/src/index.js). LBMA answers 403
+# to GitHub's runners, so this is asked first; set as a repository variable.
+GOLD_PROXY_URL = os.environ.get("GOLD_PROXY_URL", "").strip()
+
+GOLD_SOURCES = {
+    "lbma": {
+        "label": "Gold, LBMA PM auction", "kind": "fix",
+        "source": "LBMA — Gold Price PM auction",
+        "source_url": "https://www.lbma.org.uk/prices-and-data/precious-metal-prices",
+    },
+    "comex": {
+        "label": "Gold, COMEX front-month futures", "kind": "futures",
+        "source": "COMEX gold futures (GC), daily close via Yahoo Finance — "
+                  "fallback while the LBMA feed is unavailable",
+        "source_url": "https://finance.yahoo.com/quote/GC=F/",
+    },
+}
+
+
+def _parse_lbma(raw):
     out = {}
     for r in raw:
         d = r.get("d")
@@ -565,8 +583,72 @@ def fetch_gold():
                 row[ccy] = float(v[i])
         if row.get("USD"):
             out[d] = row
-    log(f"Gold: {len(out)} obs, latest {max(out) if out else 'n/a'}")
     return out
+
+
+def fetch_gold_comex():
+    """COMEX front-month gold futures, daily close, USD only.
+
+    Not the PM fix: a futures close at the New York settlement, carrying a
+    month or two of carry over spot (well under 1% at current rates). Used only
+    when LBMA cannot be reached, and labelled as such on the page and in the
+    read. Today's bar is dropped before the 13:30 New York settlement, so a
+    live intraday price is never passed off as a close.
+    """
+    now = dt.datetime.now(dt.timezone.utc)
+    p1 = int(dt.datetime.combine(START, dt.time(), dt.timezone.utc).timestamp())
+    url = ("https://query1.finance.yahoo.com/v8/finance/chart/GC=F"
+           f"?period1={p1}&period2={int(now.timestamp())}&interval=1d")
+    res = (get_json(url).get("chart") or {}).get("result") or []
+    if not res:
+        raise RuntimeError("Yahoo chart: no result for GC=F")
+    r = res[0]
+    off = dt.timedelta(seconds=(r.get("meta") or {}).get("gmtoffset", -14400))
+    closes = ((r.get("indicators") or {}).get("quote") or [{}])[0].get("close") or []
+    ny_now = now + off
+    settled = ny_now.time() >= dt.time(13, 30)
+    out = {}
+    for ts, c in zip(r.get("timestamp") or [], closes):
+        if c is None:
+            continue
+        d = (dt.datetime.fromtimestamp(ts, dt.timezone.utc) + off).date()
+        if d < START or d.weekday() >= 5:
+            continue
+        if d == ny_now.date() and not settled:
+            continue
+        out[d.isoformat()] = {"USD": round(float(c), 2)}
+    return out
+
+
+def fetch_gold():
+    """Gold, from the first source that answers: Worker → LBMA → COMEX.
+
+    The sources are never spliced. A fix and a futures close differ by carry,
+    so one series built from both would book that basis as a market move on
+    the day the source changed. Returns (rows, source_key).
+    """
+    tried = []
+    for name, url in (("Worker", GOLD_PROXY_URL), ("LBMA direct", LBMA_GOLD)):
+        if not url:
+            continue
+        try:
+            out = _parse_lbma(get_json(url))
+            if out:
+                log(f"Gold: LBMA via {name}, {len(out)} obs, latest {max(out)}")
+                return out, "lbma"
+            tried.append(f"{name}: empty")
+        except Exception as e:                                     # noqa: BLE001
+            log(f"Gold via {name} failed: {e}")
+            tried.append(f"{name}: {e}")
+    try:
+        out = fetch_gold_comex()
+    except Exception as e:                                         # noqa: BLE001
+        raise RuntimeError("; ".join(tried + [f"COMEX: {e}"])) from None
+    if not out:
+        raise RuntimeError("; ".join(tried + ["COMEX: empty"]))
+    log(f"Gold: LBMA unavailable ({'; '.join(tried)}); "
+        f"COMEX fallback, {len(out)} obs, latest {max(out)}")
+    return out, "comex"
 
 
 def build_context(us_nominal):
@@ -616,22 +698,23 @@ def build_context(us_nominal):
         errors.append({"series": "US breakeven inflation",
                        "detail": "derived from the real curve, which failed"})
     try:
-        gold = fetch_gold()
+        gold, gsrc = fetch_gold()
     except Exception as e:                                         # noqa: BLE001
         log(f"Gold FAILED: {e}")
-        errors.append({"series": "Gold, LBMA PM auction", "detail": str(e)})
-        gold = {}
+        errors.append({"series": "Gold", "detail": str(e)})
+        gold, gsrc = {}, None
     if gold:
         dates = sorted(gold)
         ccys = [c for c in ("USD", "GBP", "EUR") if any(c in gold[d] for d in dates)]
         ctx["gold"] = {
-            "label": "Gold, LBMA PM auction", "unit": "ccy",
+            **GOLD_SOURCES[gsrc], "unit": "ccy",
             "dates": dates, "tenors": ccys,
             "series": {c: [gold[d].get(c) for d in dates] for c in ccys},
             "asof": dates[-1],
-            "source": "LBMA — Gold Price PM auction",
-            "source_url": "https://www.lbma.org.uk/prices-and-data/precious-metal-prices",
         }
+        if gsrc != "lbma":
+            errors.append({"series": "Gold, LBMA PM auction",
+                           "detail": "unavailable; showing COMEX futures instead"})
     return ctx, errors
 
 

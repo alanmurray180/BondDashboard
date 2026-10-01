@@ -51,6 +51,11 @@ jobs:
       commentary: ${{ steps.commentary.outputs.status }}
     env:
       UK_BASIS: spot          # BoE IADB par endpoint blocks datacentre IPs
+      # LBMA blocks GitHub's runners too; the refresh Worker's /gold route
+      # fetches it from Cloudflare. Repository variable, e.g.
+      # https://bonddashboard.<account>.workers.dev/gold. Unset or failing,
+      # fetch_rates falls back to LBMA direct, then COMEX futures.
+      GOLD_PROXY_URL: ${{ vars.GOLD_PROXY_URL }}
     steps:
       - uses: actions/checkout@v4
 

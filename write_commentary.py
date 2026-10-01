@@ -110,6 +110,21 @@ class Curve:
             return None
         return (ser[-1] - ser[j]) * 100
 
+    def change_1d_on(self, code, tenor, day):
+        """The session move ending on `day`, against the observation before it."""
+        m = self.m.get(code)
+        if not m or tenor not in m["series"] or day is None:
+            return None
+        ser = m["series"][tenor]
+        i = self._index(m["dates"], day)
+        if i is None or m["dates"][i] != day:
+            return None
+        prev = (dt.date.fromisoformat(day) - dt.timedelta(days=1)).isoformat()
+        j = self._index(m["dates"], prev)
+        if j is None or ser[i] is None or ser[j] is None:
+            return None
+        return (ser[i] - ser[j]) * 100
+
     def spread(self, code, short, long_, day=None):
         a = self.level(code, short, day)
         b = self.level(code, long_, day)
@@ -169,6 +184,20 @@ def _dirword(x, up, down, flat="little changed", thresh=1.0):
     return up if x > 0 else down
 
 
+def _chg(bp, up="rose", down="fell"):
+    """'rose 3.0bp', or 'was little changed' under 1bp, not 'little changed 0.4bp'."""
+    word = _dirword(bp, up, down)
+    return "was little changed" if word == "little changed" else f"{word} {_bp(bp, 1)}"
+
+
+def _move(bp, lvl, up="rose", down="fell"):
+    """'rose 3.0bp to 4.05%', or 'was little changed at 4.05%' under 1bp."""
+    word = _dirword(bp, up, down)
+    if word == "little changed":
+        return f"was little changed at {lvl:.2f}%"
+    return f"{word} {_bp(bp, 1)} to {lvl:.2f}%"
+
+
 def _curve_shape(front_bp, back_bp):
     """Classify the day's move from the front-end and long-end changes."""
     if front_bp is None or back_bp is None:
@@ -182,10 +211,12 @@ def _curve_shape(front_bp, back_bp):
         if both_dn:
             return "parallel_down", "a near-parallel rally"
         return "parallel", "a flat session"
+    # Bear or bull is whichever leg did the moving: a 3bp fall at the front
+    # with the long end up 0.4bp is a bull steepener, not a bear one.
     if steep > 0:
-        return ("bear_steepen", "a bear steepening") if back_bp > 0 else \
+        return ("bear_steepen", "a bear steepening") if back_bp > -front_bp else \
                ("bull_steepen", "a bull steepening")
-    return ("bear_flatten", "a bear flattening") if front_bp > 0 else \
+    return ("bear_flatten", "a bear flattening") if front_bp > -back_bp else \
            ("bull_flatten", "a bull flattening")
 
 
@@ -204,8 +235,8 @@ def write_us(cv):
     paras = []
     p1 = f"The session was {phrase}."
     if d1_b is not None and d1_f is not None:
-        p1 += (f" The 30y {_dirword(d1_b, 'rose', 'fell')} {_bp(d1_b, 1)} "
-               f"and the 2y {_dirword(d1_f, 'rose', 'fell')} {_bp(d1_f, 1)}.")
+        p1 += (f" The 30y {_chg(d1_b)} "
+               f"and the 2y {_chg(d1_f)}.")
     if d5_sp is not None and m1_sp is not None:
         p1 += (f" That puts 2s30s {_bp(d5_sp, 1)} "
                f"{'steeper' if d5_sp > 0 else 'flatter'} over five sessions and "
@@ -226,11 +257,11 @@ def write_us(cv):
                   else "inflation compensation" if abs(be_1m_bp) > abs(real_1m_bp) * 1.5
                   else "both legs together")
         paras.append(
-            f"Decomposing the month: the 30y nominal {_dirword(nom_1m, 'rose', 'fell')} "
-            f"{_bp(nom_1m, 1)}, the 30y real yield {_dirword(real_1m_bp, 'rose', 'fell')} "
-            f"{_bp(real_1m_bp, 1)} to {real_30:.2f}%, and 10y breakevens "
-            f"{_dirword(be_1m_bp, 'widened', 'narrowed')} {_bp(be_1m_bp, 1)} to "
-            f"{be_10:.2f}%. The move is being driven by {driver}."
+            f"Decomposing the month: the 30y nominal {_chg(nom_1m)}"
+            f", the 30y real yield {_move(real_1m_bp, real_30)}"
+            f", and 10y breakevens "
+            f"{_move(be_1m_bp, be_10, 'widened', 'narrowed')}"
+            f". The move is being driven by {driver}."
         )
 
     pol = (cv.m.get("US", {}).get("policy") or {})
@@ -273,9 +304,7 @@ def write_uk(cv):
     paras = []
     p1 = f"Gilts saw {phrase}."
     if d1_f is not None and d1_b is not None:
-        p1 += (f" The 5y {_dirword(d1_f, 'rose', 'fell')} {_bp(d1_f, 1)} to "
-               f"{lvl_f:.2f}% and the 30y {_dirword(d1_b, 'rose', 'fell')} "
-               f"{_bp(d1_b, 1)} to {lvl_b:.2f}%.")
+        p1 += (f" The 5y {_move(d1_f, lvl_f)} and the 30y {_move(d1_b, lvl_b)}.")
     paras.append(p1)
 
     if m3_sp is not None:
@@ -341,7 +370,11 @@ def write_gold(cv):
     real_1m = cv.ctx_change("usreal", "30Y", "1m")
 
     paras = []
-    p1 = f"The PM auction fixed at ${lvl:,.2f}."
+    if g.get("kind") == "futures":
+        p1 = (f"With the LBMA feed unavailable, front-month COMEX futures "
+              f"closed at ${lvl:,.2f}.")
+    else:
+        p1 = f"The PM auction fixed at ${lvl:,.2f}."
     if m1 is not None and lvl:
         pct = m1 / (lvl - m1) * 100 if (lvl - m1) else 0
         p1 += (f" That is {abs(pct):.1f}% "
@@ -360,9 +393,45 @@ def write_gold(cv):
         )
     return {
         "key": "gold", "colour": "--m-JP", "title": "Gold",
-        "metrics": [{"label": "PM fix", "ref": "c.gold.USD", "h": ["1d", "1m"]}],
+        "metrics": [{"label": "COMEX" if g.get("kind") == "futures" else "PM fix",
+                     "ref": "c.gold.USD", "h": ["1d", "1m"]}],
         "body": paras,
     }
+
+
+def _headline(cv):
+    """The two long ends, read on a session both of them traded.
+
+    The BoE publishes a session behind the Treasury, so the two latest 1d moves
+    are routinely different days; set side by side, a US session can look like
+    it moved "with" a gilt session it never met. Below the noise floor a long
+    end has not moved, and two of those are a quiet day, not a common bid.
+    """
+    day = cv.common_latest("US", "UK")
+    us = cv.change_1d_on("US", "30Y", day)
+    uk = cv.change_1d_on("UK", "30Y", day)
+    if us is None or uk is None:
+        return "Curve read for the last session."
+    us_asof = (cv.m.get("US") or {}).get("asof")
+    when = "" if day == us_asof else f" on {day}"
+    us_txt, uk_txt = f"the US 30y {_chg(us)}", f"the gilt 30y {_chg(uk)}"
+    us_moved, uk_moved = abs(us) >= DIR_MIN_BP, abs(uk) >= DIR_MIN_BP
+
+    if not us_moved and not uk_moved:
+        both = (f"US and gilt 30y yields were both little changed"
+                if abs(us) < 1 and abs(uk) < 1 else f"{us_txt} and {uk_txt}")
+        return (f"A quiet session for the long ends{when}: {both}, "
+                f"so there is no duration signal to read.")
+    if us_moved != uk_moved:
+        mover, still = (us_txt, uk_txt) if us_moved else (uk_txt, us_txt)
+        return (f"The long-end move was local{when}: {mover} while {still}.")
+    if (us > 0) == (uk > 0):
+        what = ("a common selloff in duration" if us > 0
+                else "a common duration bid")
+        return (f"Long ends moved together{when}: {us_txt} and {uk_txt}, "
+                f"pointing at {what} rather than anything domestic.")
+    return (f"The two long ends parted company{when}: {us_txt} while "
+            f"{uk_txt}, so the driver is local rather than global.")
 
 
 def compose(payload):
@@ -372,23 +441,7 @@ def compose(payload):
     if not sections:
         return {}
 
-    us_1d_30 = cv.change_bp("US", "30Y", "1d")
-    uk_1d_30 = cv.change_bp("UK", "30Y", "1d")
-    if us_1d_30 is not None and uk_1d_30 is not None:
-        same = (us_1d_30 > 0) == (uk_1d_30 > 0)
-        headline = (
-            f"Long ends moved together: the US 30y "
-            f"{_dirword(us_1d_30, 'rose', 'fell')} {_bp(us_1d_30, 1)} and the "
-            f"gilt 30y {_dirword(uk_1d_30, 'rose', 'fell')} {_bp(uk_1d_30, 1)}, "
-            f"pointing at a common duration bid rather than anything domestic."
-            if same else
-            f"The two long ends parted company: the US 30y "
-            f"{_dirword(us_1d_30, 'rose', 'fell')} {_bp(us_1d_30, 1)} while the "
-            f"gilt 30y {_dirword(uk_1d_30, 'rose', 'fell')} {_bp(uk_1d_30, 1)}, "
-            f"so the driver is local rather than global."
-        )
-    else:
-        headline = "Curve read for the last session."
+    headline = _headline(cv)
 
     uk = cv.m.get("UK", {})
     foot = ("Written automatically from the published curves; every figure is "
@@ -484,11 +537,37 @@ def directional_reasons(cv, code, text, title):
 
     ds = _known([cv.change_bp(code, long_, h) for h in DIR_HORIZONS])
     if _moves(ds):
-        if SOLDOFF.search(text) and not any(x > 0 for x in ds) and not RALLIED.search(text):
+        about = _about_tenor(text, long_, m["tenors"])
+        if SOLDOFF.search(about) and not any(x > 0 for x in ds) and not RALLIED.search(about):
             reasons.append(f"{title}: says selloff, the {long_} fell over every horizon")
-        if RALLIED.search(text) and not any(x < 0 for x in ds) and not SOLDOFF.search(text):
+        if RALLIED.search(about) and not any(x < 0 for x in ds) and not SOLDOFF.search(about):
             reasons.append(f"{title}: says rally, the {long_} rose over every horizon")
     return reasons
+
+
+CLAUSE = re.compile(r"(?<=[.;:])\s+|,\s+|\s+(?:and|while|but)\s+")
+
+
+def _tenor_re(t):
+    """'30Y' as the prose writes it: 30y, 30-year, 30 year."""
+    n = re.escape(t[:-1])
+    unit = {"Y": r"(?:y|-?\s?years?)", "M": r"(?:m|-?\s?months?)"}.get(t[-1], "")
+    return re.compile(rf"\b{n}{unit}\b", re.I) if unit else re.compile(re.escape(t), re.I)
+
+
+def _about_tenor(text, tenor, tenors):
+    """The clauses a rally/selloff word in them could be saying about `tenor`.
+
+    "The 5y fell 3bp and the 30y was little changed" says nothing about the
+    30y rallying; reading the whole paragraph as one bag of words withheld a
+    correct gilt read on 1 October. A clause that names only other tenors is
+    dropped; one naming `tenor`, or no tenor at all ("gilts rallied"), is kept.
+    """
+    own = _tenor_re(tenor)
+    others = [_tenor_re(t) for t in tenors if t != tenor]
+    kept = [c for c in CLAUSE.split(text)
+            if own.search(c) or not any(o.search(c) for o in others)]
+    return " ".join(kept)
 
 
 def candidate_values(cv, code):

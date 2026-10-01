@@ -97,6 +97,13 @@ jobs:
         # exits non-zero if any market drops out, so a broken build fails loudly
         # rather than publishing a page with a market silently missing
 
+      # The in-day health panel's fallback. The page polls the Worker's
+      # GET /live while open; this snapshot is what it shows when the Worker
+      # cannot answer. Never fails the build — failures are annotated and named
+      # on the page. Node is preinstalled on ubuntu-latest; live.js needs 18+.
+      - name: Snapshot in-day quotes
+        run: node worker/snapshot.mjs live.json
+
       - name: Write and reconcile commentary
         id: commentary
         run: python3 write_commentary.py
@@ -104,6 +111,10 @@ jobs:
 
       - name: Build page
         run: python3 build_dashboard.py
+        env:
+          # Repository variable: https://bonddashboard.<subdomain>.workers.dev/live
+          # Unset, the panel shows the build's snapshot only.
+          LIVE_URL: ${{ vars.LIVE_URL }}
 
       - name: Sanity-check the output
         run: python3 check_build.py

@@ -241,6 +241,31 @@ footer.foot b{color:var(--ink-2);font-weight:600}
   border-left:3px solid #fab219;background:var(--raised);border-radius:0 8px 8px 0;
   padding:9px 13px;margin:12px 0 0;font-size:11.5px;color:var(--ink-2);
 }
+
+/* ---------- in-day health ---------- */
+.live-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin:0 0 12px}
+.live-head h2{margin:0}
+.live-src{font-size:11.5px;color:var(--muted)}
+.live-src b{color:var(--ink-2);font-weight:600}
+.live-groups{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px}
+.lg{background:var(--raised);border:1px solid var(--border);border-left:3px solid var(--st);border-radius:9px;padding:9px 12px}
+.lg .t{font-size:11.5px;color:var(--ink-2);margin-bottom:3px}
+.lg .v{display:flex;align-items:baseline;gap:8px;font-size:15px;font-weight:600}
+.lg .v .z{font-size:11.5px;font-weight:400;color:var(--muted);font-variant-numeric:tabular-nums}
+.st-green{--st:var(--m-DE)} .st-amber{--st:var(--m-JP)} .st-red{--st:var(--pos-hi)} .st-na{--st:var(--axis)}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink)}
+.pill::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--st)}
+table.live{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums}
+table.live th{font-weight:500;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;text-align:right;padding:0 8px 6px;border-bottom:1px solid var(--grid);white-space:nowrap}
+table.live td{padding:5px 8px;text-align:right;border-bottom:1px solid var(--grid);white-space:nowrap}
+table.live th.l,table.live td.l{text-align:left}
+table.live tr.grp td{text-align:left;padding-top:13px;font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-2);border-bottom:0}
+table.live tr.grp .gn{font-weight:400;letter-spacing:0;text-transform:none;color:var(--muted);font-size:11px;margin-left:10px;white-space:normal}
+table.live td .wh{color:var(--muted);font-size:10.5px;margin-left:6px}
+table.live td.up{color:var(--pos-hi)} table.live td.dn{color:var(--neg-hi)}
+table.live td.err{color:var(--muted);text-align:left;white-space:normal}
+.zbar{display:inline-block;width:64px;height:6px;border-radius:3px;background:var(--neutral);position:relative;vertical-align:middle;margin-left:8px;overflow:hidden}
+.zbar i{position:absolute;left:0;top:0;bottom:0;background:var(--st)}
 </style>
 </head>
 <body>
@@ -265,6 +290,19 @@ footer.foot b{color:var(--ink-2);font-weight:600}
 <div id="freshness" class="hidden"></div>
 
 <section class="card brief" id="brief"></section>
+
+<section class="card hidden" id="liveCard">
+  <div class="live-head"><h2>In-day market health</h2><span class="live-src" id="liveSrc"></span></div>
+  <p class="note">Delayed market quotes, each move scored against that instrument's own
+    recent days: z is today's move divided by the standard deviation of its daily moves over the
+    last <span id="liveLb">60</span> sessions, signed so that a positive reading is stress.
+    <b>Normal</b> under 1, <b>watch</b> 1 to 2, <b>unusual</b> 2 or more; a volatility index in the top
+    quarter (top decile) of its year is watch (unusual) whatever today's move. A group shows its worst
+    member. This measures how unusual today is, not value.</p>
+  <div class="live-groups" id="liveGroups"></div>
+  <div class="tbl-scroll"><table class="live" id="liveTbl"></table></div>
+  <p class="note hidden" id="liveErr" style="margin:10px 0 0"></p>
+</section>
 
 <section class="card">
   <h2>Terminology</h2>
@@ -1338,6 +1376,116 @@ function renderFooter(){
     `<br>Built ${DATA.generated.replace('T',' ').replace('Z',' UTC')}. Not investment advice; figures are for monitoring and should be checked against a dealing screen before acting.` + q;
 }
 
+/* ------------------------------------------------ in-day health */
+/* Two sources, one renderer. The build bakes a snapshot into DATA.live; when
+   the page knows the Worker's address (DATA.live_url) it asks it for the
+   current reading on load and every two minutes while the tab is visible.
+   The snapshot stays on screen, labelled as such, whenever the Worker cannot
+   answer — the panel never goes blank because one route is down. */
+const LIVE_POLL_MS=120000;
+const STATUS_WORD={green:'Normal',amber:'Watch',red:'Unusual',na:'No reading'};
+const liveState={payload:DATA.live||null, origin:DATA.live?'snapshot':null, liveErr:null};
+const LON_T=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',hour:'2-digit',minute:'2-digit'});
+const LON_D=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London'});
+function liveWhen(iso){
+  if(!iso) return '–';
+  const t=new Date(iso);
+  return LON_D.format(t)===LON_D.format(new Date())? LON_T.format(t) : labelDay(toDay(LON_D.format(t)))+' '+LON_T.format(t);
+}
+function liveLevel(i){
+  if(i.level==null) return i.flag? esc(i.flag) : '–';
+  const v=i.level;
+  if(i.kind==='yield') return v.toFixed(3)+'%';
+  if(i.unit==='bp') return Math.round(v)+'bp';
+  if(i.currency==='GBp') return v.toLocaleString('en-GB',{maximumFractionDigits:1})+'p';
+  if(Math.abs(v)<10) return v.toFixed(4);
+  return v.toFixed(2);
+}
+function ordinal(n){ const t=n%100, u=n%10; return n+((t>10&&t<14)?'th':u===1?'st':u===2?'nd':u===3?'rd':'th'); }
+function liveMove(i){
+  if(i.move==null) return {t:'–',c:''};
+  const m=i.move, sg=m>0?'+':'';
+  const t= i.unit==='bp'? sg+m.toFixed(1)+'bp' : i.unit==='%'? sg+m.toFixed(2)+'%' : sg+m.toFixed(2);
+  return {t, c: m>0?'up': m<0?'dn':''};
+}
+function renderLive(){
+  const card=$('#liveCard'), P=liveState.payload;
+  if(!P && !DATA.live_url){ card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  const src=$('#liveSrc');
+  if(!P){ src.textContent= liveState.liveErr? 'Live feed unavailable: '+liveState.liveErr : 'Loading…'; return; }
+  const latest=P.groups.flatMap(g=>g.items).map(i=>i.asof).filter(Boolean).sort().pop();
+  src.innerHTML = (liveState.origin==='worker'
+      ? '<b>Live</b> via the refresh Worker, refreshed every 2 minutes'
+      : '<b>Snapshot</b> from the build at '+liveWhen(P.generated)+' London'+
+        (DATA.live_url? ' — live feed unavailable'+(liveState.liveErr? ' ('+esc(liveState.liveErr)+')':'') : ''))+
+    ' · latest quote '+liveWhen(latest)+', delayed ~15 min · source: Yahoo Finance';
+  $('#liveLb').textContent=P.lookback||60;
+  const gh=$('#liveGroups'); gh.innerHTML='';
+  P.groups.forEach(g=>{
+    const n=el('div','lg st-'+g.status);
+    n.appendChild(el('div','t',esc(g.title)));
+    n.appendChild(el('div','v',`<span class="pill">${STATUS_WORD[g.status]}</span>`+
+      (g.stress!=null? `<span class="z">worst ${g.stress.toFixed(1)}σ</span>` : '')));
+    gh.appendChild(n);
+  });
+  const tbl=$('#liveTbl'); tbl.innerHTML='';
+  const hd=el('tr');
+  [['Indicator','l'],['Level',''],['Today',''],['Normal day',''],['Stress z',''],['Status','l'],['Quote','']]
+    .forEach(([h,c])=>hd.appendChild(el('th',c,h)));
+  tbl.appendChild(el('thead')).appendChild(hd);
+  const tb=el('tbody'); tbl.appendChild(tb);
+  P.groups.forEach(g=>{
+    const tr=el('tr','grp'); const td=el('td',null,esc(g.title)+`<span class="gn">${esc(g.note||'')}</span>`);
+    td.setAttribute('colspan',7); tr.appendChild(td); tb.appendChild(tr);
+    g.items.forEach(i=>{
+      const r=el('tr');
+      r.appendChild(el('td','l',esc(i.label)+(i.what?`<span class="wh">${esc(i.what)}</span>`:'')));
+      if(i.error){
+        const e=el('td','err','unavailable — '+esc(i.error)); e.setAttribute('colspan',6); r.appendChild(e);
+        tb.appendChild(r); return;
+      }
+      const mv=liveMove(i);
+      r.appendChild(el('td',null,liveLevel(i)));
+      r.appendChild(el('td',mv.c,mv.t));
+      r.appendChild(el('td',null, i.sigma==null? '–' : '±'+(i.unit==='bp'? i.sigma.toFixed(1)+'bp' : i.unit==='%'? i.sigma.toFixed(2)+'%' : i.sigma.toFixed(2))));
+      const sz=i.stress, w=sz==null?0:Math.min(100,Math.max(0,sz)/3*100);
+      r.appendChild(el('td','st-'+i.status, (sz==null?'–':sz.toFixed(1))+`<span class="zbar"><i style="width:${w}%"></i></span>`));
+      r.appendChild(el('td','l st-'+i.status,`<span class="pill">${STATUS_WORD[i.status]}</span>`+
+        (i.pct!=null? `<span class="wh">${ordinal(i.pct)} percentile of 1y</span>`:'')));
+      r.appendChild(el('td',null, liveWhen(i.asof)));
+      bind(r, ()=>`<div class="h">${esc(i.label)}</div>`+
+        (i.prev!=null? `<div class="r"><span class="k">Previous close${i.prevSession?' ('+labelDay(toDay(i.prevSession))+')':''}</span><span>${liveLevel({...i,level:i.prev})}</span></div>`:'')+
+        (i.z!=null? `<div class="r"><span class="k">Move in sigmas</span><span>${i.z>0?'+':''}${i.z.toFixed(2)}</span></div>`:'')+
+        `<div class="r"><span class="k">Stress direction</span><span>${i.stressDir==='up'?'rise':i.stressDir==='down'?'fall':'either way'}</span></div>`+
+        (i.sameSession===false? '<div class="r"><span class="k">Note</span><span>legs on different sessions</span></div>':''));
+      tb.appendChild(r);
+    });
+  });
+  const errs=P.errors||[], en=$('#liveErr');
+  if(errs.length){
+    en.classList.remove('hidden');
+    en.innerHTML='Quotes unavailable: '+errs.map(e=>`<b>${esc(e.symbol)}</b> (${esc(e.detail)})`).join(' · ')+'. Rows depending on them are marked; the rest are unaffected.';
+  } else en.classList.add('hidden');
+}
+async function pollLive(){
+  if(!DATA.live_url || document.hidden) return;
+  try{
+    const r=await fetch(DATA.live_url,{cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const p=await r.json();
+    // A Worker Yahoo has blocked answers with every row an error; the snapshot
+    // is the better thing to show then.
+    const good=(p.groups||[]).some(g=>g.items.some(i=>!i.error));
+    if(!good) throw new Error('no quotes came back'+((p.errors||[])[0]? ': '+p.errors[0].detail:''));
+    liveState.payload=p; liveState.origin='worker'; liveState.liveErr=null;
+  }catch(e){
+    liveState.liveErr=String(e.message||e).slice(0,140);
+    if(liveState.origin==='worker'){ liveState.payload=DATA.live||null; liveState.origin=DATA.live?'snapshot':null; }
+  }
+  renderLive();
+}
+
 /* ------------------------------------------------ orchestration */
 /* Sessions the publisher has not filled. The history around them is kept and
    still answers the horizons that clear the hole; only comparisons that would
@@ -1361,7 +1509,7 @@ function renderAll(){
   buildRamp();
   renderFreshness();
   renderHistoryNote();
-  renderBrief(); buildTiles();
+  renderBrief(); renderLive(); buildTiles();
   renderYieldGrid(); renderSpreadGrid(); renderCrossGrid(); renderCtxGrid();
   renderScaleKey(); renderCross(); renderSpreadHistory(); renderCurves(); renderTableView(); renderFooter();
 }
@@ -1386,6 +1534,9 @@ $('#stamp').textContent =
 buildChips();
 buildSpreadChips();
 renderAll();
+pollLive();
+setInterval(pollLive, LIVE_POLL_MS);
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) pollLive(); });
 })();
 </script>
 </body>

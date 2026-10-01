@@ -14,12 +14,15 @@ free official publisher; no API keys, no logins.
 | `write_commentary.py` | writes `commentary.json` from the data, then reconciles it |
 | `policy_rates.json` | central bank rates shown on the tiles — **update by hand each month** |
 | `commentary.json` | the written read at the top of the page — written automatically, or by hand |
+| `worker/src/live.js` | the in-day health panel: delayed quotes scored against their own recent moves |
+| `worker/snapshot.mjs` | runs `live.js` in the build, writes `live.json` — the panel's fallback |
 | `manual_quotes.json` | optional same-day UK 2y/30y screen quotes (reference only) |
 
 ## Run
 
 ```bash
 python3 fetch_rates.py         # ~25s: US, UK, DE, JP. Exits non-zero if a market drops out.
+node worker/snapshot.mjs       # in-day quotes snapshot -> live.json (never fails)
 python3 write_commentary.py    # writes the read, then gates it against the data
 python3 build_dashboard.py     # writes bond_yield_monitor.html
 python3 check_build.py         # gates it: exits non-zero if it must not be published
@@ -78,6 +81,20 @@ When a publisher starts answering 200 with an interstitial instead of JSON,
 `json.loads` reports only "Expecting value: line 1 column 1". `get_json()`
 carries the status, content type, length and opening bytes into the error
 instead, which is the difference between a diagnosable failure and a guess.
+
+## In-day health is a different kind of source
+
+Everything above is an official publisher's end-of-day file. The **In-day
+market health** panel is not: it reads delayed market quotes from Yahoo's
+chart endpoint, which is unofficial and keyless. It is kept apart accordingly —
+it never fails the build, its failures are named on the page and annotated on
+the run, and it scores *how unusual today's move is* for each instrument, not
+levels to set against the curves. The page polls the Worker's `GET /live`
+(set the `LIVE_URL` repository variable; see `worker/README.md`) and falls back
+to the snapshot the build took when the Worker cannot answer.
+
+ETF moves are total return: the previous close is Yahoo's dividend-adjusted
+one, or HYG would book its monthly ex-dividend drop as a credit selloff.
 
 ## Staleness is judged per market
 

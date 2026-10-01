@@ -61,6 +61,36 @@ Change the cron **here**, never in the Cloudflare dashboard. Workers Builds
 applies `[triggers]` from `wrangler.toml` on every deploy, so a dashboard edit
 survives only until the next push to `main` and then reverts without warning.
 
+## In-day health feed: `GET /live`
+
+The Worker also serves the page's **In-day market health** panel. `GET /live`
+returns JSON built by [`src/live.js`](src/live.js): delayed quotes (Yahoo's
+chart endpoint, keyless, ~15 minutes behind) for MOVE, VIX, the Cboe Treasury
+yield indices, the credit and TIPS ETF ratios, the gilt ETF, sterling, the
+dollar index and the yen, each scored as a z against its own last 60 daily
+moves. The page polls it every two minutes while the tab is visible.
+
+- Open CORS, no key: it is public market data and only the fixed symbol list in
+  `live.js` is ever requested, so it is not an open proxy.
+- The payload is held for 60s per isolate and upstream charts cached at the edge
+  for the same, so many open tabs cost Yahoo a handful of requests a minute.
+  One refresh is 16 symbols, up to 32 subrequests with the second Yahoo host —
+  inside the free plan's 50.
+- A symbol that fails is named in the payload's `errors` and its row says so;
+  the response is still 200.
+
+**Point the page at it** with a repository variable (Settings → Secrets and
+variables → Actions → Variables): `LIVE_URL` =
+`https://bonddashboard.<your-subdomain>.workers.dev/live`. The next build bakes
+it in. Without it the panel shows only the build-time snapshot from
+`worker/snapshot.mjs`, which is also what the page falls back to whenever the
+Worker cannot answer — LBMA blocked Cloudflare outright in October 2026, and
+Yahoo may yet do the same, so the snapshot is the guarantee and the Worker the
+improvement.
+
+Check it with `curl https://bonddashboard.<your-subdomain>.workers.dev/live`;
+`wrangler tail` logs `live: N symbol(s) failed: …` when Yahoo refuses.
+
 ## Deploy
 
 A Cloudflare account on the free plan is enough, and you do **not** need a

@@ -25,6 +25,8 @@
  * only the slot it is meant to, not a genuine refresh that arrived late.
  */
 
+import { buildLive } from "./live.js";
+
 /**
  * London hours the page rebuilds on, at :40 past, and what each one is for.
  * The intermediate windows are redundancy, not extra coverage: a build is ~40s
@@ -126,6 +128,45 @@ export async function dispatchWorkflow(env, reason) {
   return { ok: false, status: resp.status, detail };
 }
 
+/**
+ * GET /live: the in-day health payload from live.js, for the page to poll.
+ *
+ * Public market data, so CORS is open and there is no key; it only ever asks
+ * Yahoo for the fixed symbol list in live.js, so it is not an open proxy. The
+ * assembled payload is held for LIVE_TTL seconds per isolate and the upstream
+ * charts are cached at the edge for the same, so however many tabs poll, Yahoo
+ * sees a handful of requests a minute at most.
+ *
+ * A failure is still a 200 with the errors named in the payload: the page shows
+ * what arrived and says what did not, and falls back to the build's snapshot
+ * only when nothing usable came back at all.
+ */
+export const LIVE_TTL = 60;
+let liveMemo = null;
+
+export async function serveLive() {
+  const now = Date.now();
+  if (!liveMemo || now - liveMemo.at > LIVE_TTL * 1000) {
+    const body = JSON.stringify(await buildLive("worker", fetch, {
+      cf: { cacheTtl: LIVE_TTL, cacheEverything: true },
+    }));
+    liveMemo = { at: now, body };
+    const p = JSON.parse(body);
+    if (p.errors.length) {
+      console.log(`live: ${p.errors.length} symbol(s) failed: ` +
+        p.errors.map((e) => `${e.symbol} ${e.detail}`).join(" | ").slice(0, 800));
+    }
+  }
+  return new Response(liveMemo.body, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": `public, max-age=${LIVE_TTL}`,
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+}
+
 export default {
   async scheduled(event, env, ctx) {
     const now = scheduledDate(event);
@@ -141,13 +182,17 @@ export default {
   },
 
   /**
-   * Manual trigger, for testing the Worker without waiting for the cron.
+   * GET /live is the in-day health feed above; POST is the manual trigger,
+   * for testing the Worker without waiting for the cron.
    * Requires the TRIGGER_KEY secret, so the endpoint being public does not
    * mean anyone can spend your Actions minutes.
    */
   async fetch(request, env) {
+    if (request.method === "GET" && new URL(request.url).pathname === "/live") {
+      return serveLive();
+    }
     if (request.method !== "POST") {
-      return new Response("POST with X-Trigger-Key to rebuild\n", {
+      return new Response("GET /live for in-day health; POST with X-Trigger-Key to rebuild\n", {
         status: 405,
       });
     }

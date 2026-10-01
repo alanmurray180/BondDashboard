@@ -88,6 +88,12 @@ Worker cannot answer — LBMA blocked Cloudflare outright in October 2026, and
 Yahoo may yet do the same, so the snapshot is the guarantee and the Worker the
 improvement.
 
+**Branch previews.** Workers Builds runs `wrangler preview` (not `deploy`) for
+any branch other than `main`, and that fails without a `[previews.vars]` block
+in `wrangler.toml`. The block is there; its `WORKFLOW_FILE` deliberately names a
+workflow that does not exist, so a preview can serve `/live` for testing but can
+never dispatch a real build. Previews carry no cron.
+
 Check it with `curl https://bonddashboard.<your-subdomain>.workers.dev/live`;
 `wrangler tail` logs `live: N symbol(s) failed: …` when Yahoo refuses.
 

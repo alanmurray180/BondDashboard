@@ -37,6 +37,18 @@ GITHUB_REPO = "BondDashboard"
 WORKFLOW_FILE = "build.yml"
 GIT_REF = "main"
 
+# Workers Builds runs `wrangler preview` for every branch other than main, and
+# that refuses to run without this block. A preview gets its own URL, which is
+# the place to try GET /live before merging. It must never be able to start a
+# real build, so WORKFLOW_FILE names a workflow that does not exist: a manual
+# POST to a preview answers 404 from GitHub instead of dispatching build.yml.
+# Previews do not get the cron trigger either way.
+[previews.vars]
+GITHUB_OWNER = "alanmurray180"
+GITHUB_REPO = "BondDashboard"
+WORKFLOW_FILE = "preview-cannot-dispatch.yml"
+GIT_REF = "main"
+
 # Secrets are NOT set here — they never belong in the repo. Set them with:
 #   wrangler secret put GITHUB_TOKEN    (fine-grained PAT, Actions: read+write)
 #   wrangler secret put TRIGGER_KEY     (optional, for the manual endpoint)

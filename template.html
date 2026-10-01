@@ -341,7 +341,7 @@ footer.foot b{color:var(--ink-2);font-weight:600}
   <h2>Real yields, breakevens and gold</h2>
   <p class="note">US real yields are the Treasury's own TIPS par curve; breakeven inflation is
     the nominal par curve less the real par curve, same publisher and same day. Gold is
-    <span id="goldSrc">the LBMA PM auction</span>. Gold rows show percentage moves, everything else basis points.</p>
+    the COMEX front-month futures close. Gold rows show percentage moves, everything else basis points.</p>
   <p class="note hidden" id="ctxMissing"></p>
   <div class="tbl-scroll"><table class="grid" id="gridCtx"></table></div>
 </section>
@@ -1213,8 +1213,6 @@ function renderCtxGrid(){
   const keys=Object.keys(CTX);
   const errs=DATA.context_errors||[];
   const note=$('#ctxMissing');
-  if(CTX.gold && CTX.gold.kind==='futures')
-    $('#goldSrc').textContent='COMEX front-month futures, standing in for the LBMA PM auction';
   if(errs.length){
     note.classList.remove('hidden');
     note.innerHTML='Unavailable this build: '+

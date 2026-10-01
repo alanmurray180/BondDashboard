@@ -370,11 +370,7 @@ def write_gold(cv):
     real_1m = cv.ctx_change("usreal", "30Y", "1m")
 
     paras = []
-    if g.get("kind") == "futures":
-        p1 = (f"With the LBMA feed unavailable, front-month COMEX futures "
-              f"closed at ${lvl:,.2f}.")
-    else:
-        p1 = f"The PM auction fixed at ${lvl:,.2f}."
+    p1 = f"Front-month COMEX gold closed at ${lvl:,.2f}."
     if m1 is not None and lvl:
         pct = m1 / (lvl - m1) * 100 if (lvl - m1) else 0
         p1 += (f" That is {abs(pct):.1f}% "
@@ -393,8 +389,7 @@ def write_gold(cv):
         )
     return {
         "key": "gold", "colour": "--m-JP", "title": "Gold",
-        "metrics": [{"label": "COMEX" if g.get("kind") == "futures" else "PM fix",
-                     "ref": "c.gold.USD", "h": ["1d", "1m"]}],
+        "metrics": [{"label": "COMEX", "ref": "c.gold.USD", "h": ["1d", "1m"]}],
         "body": paras,
     }
 

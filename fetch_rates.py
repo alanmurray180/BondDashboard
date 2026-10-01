@@ -550,46 +550,18 @@ def fetch_us_real():
     return out
 
 
-LBMA_GOLD = "https://prices.lbma.org.uk/json/gold_pm.json"
-
-GOLD_SOURCES = {
-    "lbma": {
-        "label": "Gold, LBMA PM auction", "kind": "fix",
-        "source": "LBMA — Gold Price PM auction",
-        "source_url": "https://www.lbma.org.uk/prices-and-data/precious-metal-prices",
-    },
-    "comex": {
-        "label": "Gold, COMEX front-month futures", "kind": "futures",
-        "source": "COMEX gold futures (GC), daily close via Yahoo Finance — "
-                  "fallback while the LBMA feed is unavailable",
-        "source_url": "https://finance.yahoo.com/quote/GC=F/",
-    },
+GOLD_SOURCE = {
+    "label": "Gold, COMEX front-month futures",
+    "source": "COMEX gold futures (GC), daily close via Yahoo Finance",
+    "source_url": "https://finance.yahoo.com/quote/GC=F/",
 }
-
-
-def _parse_lbma(raw):
-    out = {}
-    for r in raw:
-        d = r.get("d")
-        if not d or d < START.isoformat():
-            continue
-        v = r.get("v") or []
-        row = {}
-        for i, ccy in enumerate(("USD", "GBP", "EUR")):
-            if i < len(v) and isinstance(v[i], (int, float)):
-                row[ccy] = float(v[i])
-        if row.get("USD"):
-            out[d] = row
-    return out
 
 
 def fetch_gold_comex():
     """COMEX front-month gold futures, daily close, USD only.
 
     Not the PM fix: a futures close at the New York settlement, carrying a
-    month or two of carry over spot (well under 1% at current rates). Used only
-    when LBMA cannot be reached, and labelled as such on the page and in the
-    read. Today's bar is dropped before the 13:30 New York settlement, so a
+    month or two of carry over spot (well under 1% at current rates). Today's bar is dropped before the 13:30 New York settlement, so a
     live intraday price is never passed off as a close.
     """
     now = dt.datetime.now(dt.timezone.utc)
@@ -618,36 +590,18 @@ def fetch_gold_comex():
 
 
 def fetch_gold():
-    """Gold, from the first source that answers: LBMA → COMEX.
+    """Gold, from COMEX front-month futures.
 
-    LBMA answers 403 to GitHub's runners and to Cloudflare Workers alike (a
-    Worker passthrough was tried on 1 October 2026 and got 502 from upstream),
-    so COMEX is the working source today. LBMA stays first in case the block
-    lifts.
-
-    The sources are never spliced. A fix and a futures close differ by carry,
-    so one series built from both would book that basis as a market move on
-    the day the source changed. Returns (rows, source_key).
+    The LBMA PM fix was the source until 1 October 2026, when LBMA began
+    answering 403 to GitHub's runners and to Cloudflare Workers alike. The
+    history here is COMEX throughout, never spliced with the fix: the two
+    differ by carry, and a spliced series would book that basis as a move.
     """
-    tried = []
-    try:
-        out = _parse_lbma(get_json(LBMA_GOLD))
-        if out:
-            log(f"Gold: LBMA, {len(out)} obs, latest {max(out)}")
-            return out, "lbma"
-        tried.append("LBMA: empty")
-    except Exception as e:                                         # noqa: BLE001
-        log(f"Gold via LBMA failed: {e}")
-        tried.append(f"LBMA: {e}")
-    try:
-        out = fetch_gold_comex()
-    except Exception as e:                                         # noqa: BLE001
-        raise RuntimeError("; ".join(tried + [f"COMEX: {e}"])) from None
+    out = fetch_gold_comex()
     if not out:
-        raise RuntimeError("; ".join(tried + ["COMEX: empty"]))
-    log(f"Gold: LBMA unavailable ({'; '.join(tried)}); "
-        f"COMEX fallback, {len(out)} obs, latest {max(out)}")
-    return out, "comex"
+        raise RuntimeError("COMEX: empty")
+    log(f"Gold: COMEX, {len(out)} obs, latest {max(out)}")
+    return out
 
 
 def build_context(us_nominal):
@@ -697,23 +651,20 @@ def build_context(us_nominal):
         errors.append({"series": "US breakeven inflation",
                        "detail": "derived from the real curve, which failed"})
     try:
-        gold, gsrc = fetch_gold()
+        gold = fetch_gold()
     except Exception as e:                                         # noqa: BLE001
         log(f"Gold FAILED: {e}")
-        errors.append({"series": "Gold", "detail": str(e)})
-        gold, gsrc = {}, None
+        errors.append({"series": GOLD_SOURCE["label"], "detail": str(e)})
+        gold = {}
     if gold:
         dates = sorted(gold)
         ccys = [c for c in ("USD", "GBP", "EUR") if any(c in gold[d] for d in dates)]
         ctx["gold"] = {
-            **GOLD_SOURCES[gsrc], "unit": "ccy",
+            **GOLD_SOURCE, "unit": "ccy",
             "dates": dates, "tenors": ccys,
             "series": {c: [gold[d].get(c) for d in dates] for c in ccys},
             "asof": dates[-1],
         }
-        if gsrc != "lbma":
-            errors.append({"series": "Gold, LBMA PM auction",
-                           "detail": "unavailable; showing COMEX futures instead"})
     return ctx, errors
 
 

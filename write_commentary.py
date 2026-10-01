@@ -169,6 +169,20 @@ def _dirword(x, up, down, flat="little changed", thresh=1.0):
     return up if x > 0 else down
 
 
+def _chg(bp, up="rose", down="fell"):
+    """'rose 3.0bp', or 'was little changed' under 1bp, not 'little changed 0.4bp'."""
+    word = _dirword(bp, up, down)
+    return "was little changed" if word == "little changed" else f"{word} {_bp(bp, 1)}"
+
+
+def _move(bp, lvl, up="rose", down="fell"):
+    """'rose 3.0bp to 4.05%', or 'was little changed at 4.05%' under 1bp."""
+    word = _dirword(bp, up, down)
+    if word == "little changed":
+        return f"was little changed at {lvl:.2f}%"
+    return f"{word} {_bp(bp, 1)} to {lvl:.2f}%"
+
+
 def _curve_shape(front_bp, back_bp):
     """Classify the day's move from the front-end and long-end changes."""
     if front_bp is None or back_bp is None:
@@ -182,10 +196,12 @@ def _curve_shape(front_bp, back_bp):
         if both_dn:
             return "parallel_down", "a near-parallel rally"
         return "parallel", "a flat session"
+    # Bear or bull is whichever leg did the moving: a 3bp fall at the front
+    # with the long end up 0.4bp is a bull steepener, not a bear one.
     if steep > 0:
-        return ("bear_steepen", "a bear steepening") if back_bp > 0 else \
+        return ("bear_steepen", "a bear steepening") if back_bp > -front_bp else \
                ("bull_steepen", "a bull steepening")
-    return ("bear_flatten", "a bear flattening") if front_bp > 0 else \
+    return ("bear_flatten", "a bear flattening") if front_bp > -back_bp else \
            ("bull_flatten", "a bull flattening")
 
 
@@ -204,8 +220,8 @@ def write_us(cv):
     paras = []
     p1 = f"The session was {phrase}."
     if d1_b is not None and d1_f is not None:
-        p1 += (f" The 30y {_dirword(d1_b, 'rose', 'fell')} {_bp(d1_b, 1)} "
-               f"and the 2y {_dirword(d1_f, 'rose', 'fell')} {_bp(d1_f, 1)}.")
+        p1 += (f" The 30y {_chg(d1_b)} "
+               f"and the 2y {_chg(d1_f)}.")
     if d5_sp is not None and m1_sp is not None:
         p1 += (f" That puts 2s30s {_bp(d5_sp, 1)} "
                f"{'steeper' if d5_sp > 0 else 'flatter'} over five sessions and "
@@ -226,11 +242,11 @@ def write_us(cv):
                   else "inflation compensation" if abs(be_1m_bp) > abs(real_1m_bp) * 1.5
                   else "both legs together")
         paras.append(
-            f"Decomposing the month: the 30y nominal {_dirword(nom_1m, 'rose', 'fell')} "
-            f"{_bp(nom_1m, 1)}, the 30y real yield {_dirword(real_1m_bp, 'rose', 'fell')} "
-            f"{_bp(real_1m_bp, 1)} to {real_30:.2f}%, and 10y breakevens "
-            f"{_dirword(be_1m_bp, 'widened', 'narrowed')} {_bp(be_1m_bp, 1)} to "
-            f"{be_10:.2f}%. The move is being driven by {driver}."
+            f"Decomposing the month: the 30y nominal {_chg(nom_1m)}"
+            f", the 30y real yield {_move(real_1m_bp, real_30)}"
+            f", and 10y breakevens "
+            f"{_move(be_1m_bp, be_10, 'widened', 'narrowed')}"
+            f". The move is being driven by {driver}."
         )
 
     pol = (cv.m.get("US", {}).get("policy") or {})
@@ -273,9 +289,7 @@ def write_uk(cv):
     paras = []
     p1 = f"Gilts saw {phrase}."
     if d1_f is not None and d1_b is not None:
-        p1 += (f" The 5y {_dirword(d1_f, 'rose', 'fell')} {_bp(d1_f, 1)} to "
-               f"{lvl_f:.2f}% and the 30y {_dirword(d1_b, 'rose', 'fell')} "
-               f"{_bp(d1_b, 1)} to {lvl_b:.2f}%.")
+        p1 += (f" The 5y {_move(d1_f, lvl_f)} and the 30y {_move(d1_b, lvl_b)}.")
     paras.append(p1)
 
     if m3_sp is not None:
@@ -378,13 +392,13 @@ def compose(payload):
         same = (us_1d_30 > 0) == (uk_1d_30 > 0)
         headline = (
             f"Long ends moved together: the US 30y "
-            f"{_dirword(us_1d_30, 'rose', 'fell')} {_bp(us_1d_30, 1)} and the "
-            f"gilt 30y {_dirword(uk_1d_30, 'rose', 'fell')} {_bp(uk_1d_30, 1)}, "
+            f"{_chg(us_1d_30)} and the "
+            f"gilt 30y {_chg(uk_1d_30)}, "
             f"pointing at a common duration bid rather than anything domestic."
             if same else
             f"The two long ends parted company: the US 30y "
-            f"{_dirword(us_1d_30, 'rose', 'fell')} {_bp(us_1d_30, 1)} while the "
-            f"gilt 30y {_dirword(uk_1d_30, 'rose', 'fell')} {_bp(uk_1d_30, 1)}, "
+            f"{_chg(us_1d_30)} while the "
+            f"gilt 30y {_chg(uk_1d_30)}, "
             f"so the driver is local rather than global."
         )
     else:
@@ -484,11 +498,37 @@ def directional_reasons(cv, code, text, title):
 
     ds = _known([cv.change_bp(code, long_, h) for h in DIR_HORIZONS])
     if _moves(ds):
-        if SOLDOFF.search(text) and not any(x > 0 for x in ds) and not RALLIED.search(text):
+        about = _about_tenor(text, long_, m["tenors"])
+        if SOLDOFF.search(about) and not any(x > 0 for x in ds) and not RALLIED.search(about):
             reasons.append(f"{title}: says selloff, the {long_} fell over every horizon")
-        if RALLIED.search(text) and not any(x < 0 for x in ds) and not SOLDOFF.search(text):
+        if RALLIED.search(about) and not any(x < 0 for x in ds) and not SOLDOFF.search(about):
             reasons.append(f"{title}: says rally, the {long_} rose over every horizon")
     return reasons
+
+
+CLAUSE = re.compile(r"(?<=[.;:])\s+|,\s+|\s+(?:and|while|but)\s+")
+
+
+def _tenor_re(t):
+    """'30Y' as the prose writes it: 30y, 30-year, 30 year."""
+    n = re.escape(t[:-1])
+    unit = {"Y": r"(?:y|-?\s?years?)", "M": r"(?:m|-?\s?months?)"}.get(t[-1], "")
+    return re.compile(rf"\b{n}{unit}\b", re.I) if unit else re.compile(re.escape(t), re.I)
+
+
+def _about_tenor(text, tenor, tenors):
+    """The clauses a rally/selloff word in them could be saying about `tenor`.
+
+    "The 5y fell 3bp and the 30y was little changed" says nothing about the
+    30y rallying; reading the whole paragraph as one bag of words withheld a
+    correct gilt read on 1 October. A clause that names only other tenors is
+    dropped; one naming `tenor`, or no tenor at all ("gilts rallied"), is kept.
+    """
+    own = _tenor_re(tenor)
+    others = [_tenor_re(t) for t in tenors if t != tenor]
+    kept = [c for c in CLAUSE.split(text)
+            if own.search(c) or not any(o.search(c) for o in others)]
+    return " ".join(kept)
 
 
 def candidate_values(cv, code):

@@ -632,10 +632,14 @@ def candidate_values(cv, code):
                     continue
                 base = cv.ctx_level(key, t)
                 if ctx.get("unit") == "usd" or (base or 0) > 50:
-                    # a price series: the quotable figure is the % move
+                    # a price series: the quotable figure is the % move,
+                    # and the prose gives its size with the direction in
+                    # words ("6.6% lower"), so the unsigned figure counts too.
+                    # Without it every falling month withheld the gold read.
                     prev = (base - d) if base is not None else None
                     if prev:
                         pcts.add(d / prev * 100)
+                        pcts.add(abs(d / prev * 100))
                 else:
                     bps.add(d * 100)
                     pcts.add(d)

@@ -82,6 +82,17 @@ def main(path):
     for e in d.get("context_errors") or []:
         print(f"context series unavailable: {e['series']} — {e['detail']}")
 
+    # In-day quotes are context: report, never fail.
+    lv = d.get("live")
+    if lv is None and os.path.exists(os.path.join(HERE, "live.json")):
+        with open(os.path.join(HERE, "live.json"), encoding="utf-8") as f:
+            lv = json.load(f)
+    if lv:
+        ok = sum(1 for g in lv.get("groups", []) for i in g["items"] if not i.get("error"))
+        print(f"in-day panel: {ok} indicators, {len(lv.get('errors') or [])} symbol error(s)")
+    else:
+        print("in-day panel: no snapshot")
+
     cm = d.get("commentary") or {}
     if cm.get("suppressed"):
         print("commentary: suppressed —", "; ".join(cm.get("reasons") or []))

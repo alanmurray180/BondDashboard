@@ -8,3 +8,4 @@ seed/
 node_modules/
 .wrangler/
 __pycache__/
+live.json

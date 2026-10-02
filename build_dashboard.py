@@ -18,7 +18,8 @@ import io
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOLKIT = ["fetch_rates.py", "write_commentary.py", "template.html",
            "build_dashboard.py", "check_build.py", "policy_rates.json",
-           "commentary.json", "REFRESH.md"]
+           "commentary.json", "REFRESH.md",
+           "worker/src/live.js", "worker/snapshot.mjs"]
 
 
 def pack():
@@ -44,7 +45,19 @@ def extract(html_path, dest):
 
 
 def build():
-    data = open(os.path.join(HERE, "rates.json"), encoding="utf-8").read()
+    data = json.load(open(os.path.join(HERE, "rates.json"), encoding="utf-8"))
+    # The in-day panel: a snapshot from worker/snapshot.mjs, and the Worker's
+    # address for the page to poll. Either may be absent; the page copes.
+    lp = os.path.join(HERE, "live.json")
+    if os.path.exists(lp):
+        try:
+            data["live"] = json.load(open(lp, encoding="utf-8"))
+        except ValueError as e:
+            print(f"live.json unreadable, panel will rely on the Worker: {e}")
+    live_url = os.environ.get("LIVE_URL", "").strip()
+    if live_url:
+        data["live_url"] = live_url
+    data = json.dumps(data, separators=(",", ":"))
     tpl = open(os.path.join(HERE, "template.html"), encoding="utf-8").read()
     blob = pack()
     assert "/*__DATA__*/" in tpl and "/*__TOOLKIT__*/" in tpl, "placeholder missing"

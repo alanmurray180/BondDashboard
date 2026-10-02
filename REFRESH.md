@@ -93,6 +93,14 @@ levels to set against the curves. The page polls the Worker's `GET /live`
 (set the `LIVE_URL` repository variable; see `worker/README.md`) and falls back
 to the snapshot the build took when the Worker cannot answer.
 
+The **Intraday summary** at the top of the page is written by `summarise()`
+in `live.js` from the same payload, by rule rather than free text, so every
+figure in it is the figure in the table. It compares each indicator's move
+today with its move in the last completed session, both in that instrument's
+own sigmas, and calls out reversals, breakouts after a quiet session,
+accelerations and calming, then anything unusual or on watch, each with a
+one-line implication. Treasury tenors doing the same thing are told as one line.
+
 ETF moves are total return: the previous close is Yahoo's dividend-adjusted
 one, or HYG would book its monthly ex-dividend drop as a credit selloff.
 

@@ -220,6 +220,10 @@ function score(it, s) {
   for (let i = Math.max(1, n - LOOKBACK); i < n; i++) daily.push(mv(s.closes[i - 1], s.closes[i]));
   const sigma = sd(daily);
   const z = sigma ? move / sigma : null;
+  // The last completed session's own move, on the same scale, so the summary
+  // can say whether today is continuing it, reversing it or breaking from it.
+  const prevMove = n >= 2 ? mv(s.closes[n - 2], s.closes[n - 1]) : null;
+  const prevZ = sigma && prevMove != null ? prevMove / sigma : null;
   let stress = null;
   if (z != null) stress = it.stress === "up" ? z : it.stress === "down" ? -z : Math.abs(z);
   let pct = null;
@@ -233,7 +237,7 @@ function score(it, s) {
   const level = it.kind === "yield" ? yld(s.price) : it.kind === "spread" ? s.price * 100 : s.price;
   return {
     level, prev: it.kind === "yield" ? yld(prev) : it.kind === "spread" ? prev * 100 : prev,
-    move, sigma, z, stress, pct,
+    move, sigma, z, stress, pct, prevMove, prevZ,
     unit: it.kind === "yield" || it.kind === "spread" ? "bp" : it.kind === "level" ? "pt" : "%",
     asof: new Date(s.time * 1000).toISOString(),
     session: s.today, prevSession: s.dates[n - 1],
@@ -270,7 +274,9 @@ export function assemble(charts, source, now = new Date()) {
           if (p?.z == null || q?.z == null) throw new Error("needs both legs");
           const both = p.z < 0 && q.z < 0;
           const st = both ? Math.sqrt(p.z * q.z) : 0;
-          r = { level: null, move: null, z: null, stress: st, unit: "",
+          const prevBoth = p.prevZ < 0 && q.prevZ < 0;
+          const prevSt = p.prevZ == null || q.prevZ == null ? null : prevBoth ? Math.sqrt(p.prevZ * q.prevZ) : 0;
+          r = { level: null, move: null, z: null, stress: st, prevStress: prevSt, unit: "",
             asof: p.asof < q.asof ? p.asof : q.asof, sameSession: true,
             flag: both ? "both fell" : p.z < 0 ? "gilts down, sterling not" : q.z < 0 ? "sterling down, gilts not" : "neither fell" };
         } else {
@@ -295,8 +301,173 @@ export function assemble(charts, source, now = new Date()) {
   return {
     generated: now.toISOString(), source,
     lookback: LOOKBACK, thresholds: { amber: AMBER, red: RED },
-    groups, errors,
+    groups, errors, summary: summarise(groups),
   };
+}
+
+// --------------------------------------------------------------- summary ----
+
+/**
+ * What each indicator moving up or down means, in a line. Keyed by item id,
+ * then by the sign of today's move. Written for a sterling-based holder of
+ * mixed assets: plain consequences, not forecasts.
+ */
+const IMPLY = {
+  MOVE: { up: "rates hedging is getting dearer and liquidity thinner; a poor moment to add or switch duration",
+          dn: "rates volatility is easing, so conditions for dealing in bonds are calmer" },
+  VIX: { up: "equity stress is rising; watch whether it spills into credit",
+         dn: "equity risk appetite is improving" },
+  UST3M: { up: "the front end is pricing a tighter Fed: fewer or later cuts",
+           dn: "the front end is pricing more Fed easing" },
+  UST5Y: { up: "medium-dated Treasuries are cheapening; policy expectations are being pushed higher",
+           dn: "medium-dated Treasuries are richening; the market is leaning towards easier policy" },
+  UST10Y: { up: "the benchmark discount rate is rising: duration loses value and equity valuations face a headwind",
+            dn: "the benchmark discount rate is falling: duration gains, whether from growth worries or a flight to quality" },
+  UST30Y: { up: "the long end is selling off: term premium or fiscal concern rather than policy",
+            dn: "the long end is bid: demand for long duration, often defensive" },
+  UST5S30S: { up: "the curve is steepening: long-end premium rising or easing being priced at the front",
+              dn: "the curve is flattening: tightening priced at the front or a long-end bid" },
+  IG: { up: "investment-grade spreads are tightening; corporate funding is easy",
+        dn: "investment-grade spreads are widening; corporate funding costs are rising" },
+  HY: { up: "high-yield spreads are tightening; risk appetite is firm",
+        dn: "high-yield spreads are widening; the first place risk appetite fades" },
+  EM: { up: "EM sovereign spreads are tightening; global risk appetite is supportive",
+        dn: "EM sovereign spreads are widening; usually dollar strength or risk aversion" },
+  BEI: { up: "inflation expectations are rising: linkers outperform nominals",
+         dn: "inflation expectations are falling: nominals outperform linkers" },
+  IGLT: { up: "gilts are rallying: UK yields lower",
+          dn: "gilts are selling off: UK yields higher, sterling borrowing costs up" },
+  GBPUSD: { up: "sterling is firmer: the GBP value of dollar assets falls",
+            dn: "sterling is weaker: the GBP value of dollar assets rises" },
+  SELLGB: { up: "gilts and sterling are falling together, the UK credibility pattern; watch fiscal news and gilt auctions",
+            dn: "" },
+  DXY: { up: "the dollar is strengthening, tightening global financial conditions",
+         dn: "the dollar is weakening, easing global financial conditions" },
+  USDJPY: { up: "the yen is weakening; watch JGB yields and the risk of intervention",
+            dn: "the yen is strengthening, often a risk-off or carry-unwind signal" },
+};
+
+// A volatility index flagged for where it sits, not for how far it moved.
+const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+const levelLed = (i) => i.pct != null && i.pct >= 75 && Math.abs(i.z ?? 0) < i.stress;
+const ord = (n) => n + ((n % 100 > 10 && n % 100 < 14) ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th");
+
+function fmtMove(i, v = i.move) {
+  if (v == null) return "";
+  const sg = v > 0 ? "+" : v < 0 ? "−" : "";
+  const a = Math.abs(v);
+  if (i.unit === "bp") return `${sg}${a.toFixed(1)}bp`;
+  if (i.unit === "%") return `${sg}${a.toFixed(2)}%`;
+  return `${sg}${a.toFixed(2)}`;
+}
+
+/**
+ * How today compares with the last completed session, or null when the two
+ * are not different enough to mention. Measured in each instrument's own
+ * sigmas so a 3bp move in bills and a 3bp move in the 30y are not treated
+ * alike.
+ */
+export function divergence(i) {
+  const z = i.kind === "joint" ? i.stress : i.z;
+  const pz = i.kind === "joint" ? i.prevStress : i.prevZ;
+  if (z == null || pz == null) return null;
+  const a = Math.abs(z), pa = Math.abs(pz);
+  if (i.kind !== "joint" && a >= 0.75 && pa >= 0.75 && Math.sign(z) !== Math.sign(pz))
+    return { tag: "Reversal", phrase: "reversing the last session's move" };
+  if (pa < 0.5 && a >= 1.5)
+    return { tag: "Breakout", phrase: "after a quiet last session" };
+  if (a >= 1 && Math.sign(z) === Math.sign(pz) && a >= 2 * pa && pa >= 0.25)
+    return { tag: "Accelerating", phrase: "extending the last session's move, faster" };
+  if (pa >= 2 && a < 0.5)
+    return { tag: "Calming", phrase: "quiet after a large move last session" };
+  return null;
+}
+
+/**
+ * A short, rule-written read of the panel: one headline, then the few things
+ * worth a look — anything unusual, and anything moving differently from the
+ * last session — each with its plain implication. Rule-written rather than
+ * free text so every figure in it is the figure in the table.
+ */
+export function summarise(groups) {
+  const items = groups.flatMap((g) => g.items).filter((i) => !i.error);
+  if (!items.length) return null;
+  const by = Object.fromEntries(items.map((i) => [i.id, i]));
+  const scored = items.filter((i) => i.stress != null);
+  const red = scored.filter((i) => i.status === "red");
+  const amber = scored.filter((i) => i.status === "amber");
+
+  // Tone, from the direction of the main legs rather than their size.
+  const sgn = (i, t = 0.5) => (!i || i.z == null ? 0 : i.z >= t ? 1 : i.z <= -t ? -1 : 0);
+  const ust = sgn(by.UST10Y) || sgn(by.UST30Y);
+  const credit = sgn(by.HY) || sgn(by.IG);
+  const vol = sgn(by.VIX) || sgn(by.MOVE);
+  let tone;
+  if (ust < 0 && credit < 0 && vol > 0) tone = "Risk-off: Treasuries are bid while credit weakens and volatility rises, a flight to quality.";
+  else if (ust > 0 && credit < 0) tone = "A broad selloff: Treasuries and credit are both weaker, so bonds are not hedging risk today.";
+  else if (ust > 0 && vol > 0) tone = "A rates-led selloff: yields are higher with volatility rising; credit is holding up so far.";
+  else if (ust > 0) tone = "Yields are higher in an orderly way: volatility and credit are steady.";
+  else if (ust < 0 && credit > 0) tone = "Risk-on with a bond rally: yields are lower and credit firmer, a benign mix.";
+  else if (ust < 0) tone = "Treasuries are rallying without stress elsewhere.";
+  else if (credit < 0) tone = "Rates are steady but credit is softening; worth watching.";
+  else if (credit > 0 && vol < 0) tone = "Risk appetite is firm: credit is stronger and volatility lower, rates little changed.";
+  else tone = "A quiet session so far: rates, credit and volatility are all within normal days.";
+
+  let headline;
+  if (!red.length && !amber.length) headline = "Nothing is moving more than a normal day. " + tone;
+  else {
+    const lead = [...red, ...amber].sort((a, b) => b.stress - a.stress)[0];
+    const why = levelLed(lead) ? ` (level in the ${ord(lead.pct)} percentile of its year)`
+      : lead.move != null ? ` (${fmtMove(lead)}, ${lead.stress.toFixed(1)}σ)` : ` (${lead.stress.toFixed(1)}σ)`;
+    const counts = [red.length && `${red.length} unusual`, amber.length && `${amber.length} on watch`].filter(Boolean).join(", ");
+    const leadName = lead.id.startsWith("UST") ? "the US " + lead.label : lead.label.replace(/^[A-Z][a-z]/, (m) => m.toLowerCase());
+    headline = `${counts}, led by ${leadName}${why}. ${tone}`;
+  }
+
+  const points = [];
+  const seen = new Set();
+  const add = (i, tag, phrase) => {
+    if (seen.has(i.id)) return;
+    seen.add(i.id);
+    const z = i.kind === "joint" ? i.stress : i.z;
+    const dir = i.kind === "joint" ? (i.stress > 0 ? "up" : "dn") : z >= 0 ? "up" : "dn";
+    let imp = (IMPLY[i.id] || {})[dir] || "";
+    if (tag === "Calming") imp = "the pressure from the last session has not carried into today";
+    if (!imp && i.kind === "joint") return;
+    const today = i.kind === "joint" ? `${i.flag}, ${i.stress.toFixed(1)}σ`
+      : `${fmtMove(i)} today (${z >= 0 ? "+" : "−"}${Math.abs(z).toFixed(1)}σ), last session ${fmtMove(i, i.prevMove)}` +
+        (levelLed(i) ? `; the level is in the ${ord(i.pct)} percentile of its year` : "");
+    if (levelLed(i) && !phrase) imp = (IMPLY[i.id] || {}).up || imp;
+    const name = i.id.startsWith("UST") ? "US " + i.label : i.label;
+    points.push({ id: i.id, tag, status: i.status, label: name,
+      text: `${name}: ${today}${phrase ? ", " + phrase : ""}.`,
+      implication: imp ? cap(imp) + "." : "" });
+  };
+  // Anything moving differently from the last session first, biggest first.
+  const divs = items.map((i) => ({ i, d: divergence(i) })).filter((x) => x.d)
+    .sort((a, b) => Math.abs(b.i.z ?? b.i.stress) - Math.abs(a.i.z ?? a.i.stress));
+  // Treasury tenors doing the same thing are one story, told once.
+  const TEN = ["UST3M", "UST5Y", "UST10Y", "UST30Y"];
+  const ustDivs = divs.filter((x) => TEN.includes(x.i.id));
+  for (const tag of new Set(ustDivs.map((x) => x.d.tag))) {
+    const same = ustDivs.filter((x) => x.d.tag === tag);
+    const sign = Math.sign(same[0].i.z);
+    if (same.length < 2 || !same.every((x) => Math.sign(x.i.z) === sign)) continue;
+    const legs = same.map((x) => x.i).sort((a, b) => TEN.indexOf(a.id) - TEN.indexOf(b.id));
+    const longest = legs[legs.length - 1];
+    const worst = legs.reduce((m, i) => (i.stress > m.stress ? i : m));
+    legs.forEach((i) => seen.add(i.id));
+    points.push({ id: "UST", tag, status: worst.status, label: "US Treasuries",
+      text: `US Treasuries ${legs.map((i) => i.label).join(", ")}: ` +
+        `${legs.map((i) => fmtMove(i)).join(" / ")} today, last session ` +
+        `${legs.map((i) => fmtMove(i, i.prevMove)).join(" / ")}, ${same[0].d.phrase}.`,
+      implication: cap(tag === "Calming" ? "the pressure from the last session has not carried into today"
+        : (IMPLY[longest.id] || {})[sign >= 0 ? "up" : "dn"]) + "." });
+  }
+  divs.forEach(({ i, d }) => add(i, d.tag, d.phrase));
+  // Then anything unusual or on watch that is simply continuing.
+  [...red, ...amber].sort((a, b) => b.stress - a.stress).forEach((i) => add(i, i.status === "red" ? "Unusual" : "Watch", ""));
+  return { headline, points: points.slice(0, 6), more: Math.max(0, points.length - 6) };
 }
 
 /** Fetch every symbol in parallel and assemble. */

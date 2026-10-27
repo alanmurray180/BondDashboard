@@ -281,6 +281,35 @@ table.live td.err{color:var(--muted);text-align:left;white-space:normal}
 .isum .im{display:block;font-size:12.5px;color:var(--ink-2)}
 .isum .more{font-size:11.5px;color:var(--muted);margin:10px 0 0}
 @media (max-width:560px){ .isum li{grid-template-columns:1fr;gap:2px} }
+/* ---------- one-pager ---------- */
+.card.op{padding:16px 20px}
+.op .top{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 16px;margin:0 0 14px;padding:0 0 12px;border-bottom:1px solid var(--grid)}
+.op .top h2{margin:0;font-size:13px}
+.op .curve{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;font-variant-numeric:tabular-nums}
+.op .curve .ml{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.op .curve .big{font-size:20px;font-weight:600;letter-spacing:-.01em}
+.op .curve .ch{font-size:12px;color:var(--ink-2)}
+.op .top .stamp{margin-left:auto;font-size:11px;color:var(--muted)}
+.op .blocks{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+.op .blk{background:var(--raised);border:1px solid var(--border);border-top:2px solid var(--bc);border-radius:10px;padding:12px 14px 13px;min-width:0}
+.op .blk h3{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;margin:0 0 2px;display:flex;align-items:center;gap:7px}
+.op .blk h3 .dot{width:9px;height:9px;border-radius:50%;background:var(--bc)}
+.op .asof{font-size:11.5px;color:var(--muted);margin:0 0 9px}
+.op .kv{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px;font-variant-numeric:tabular-nums}
+.op .kv .ml{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.op .lvl{font-size:26px;font-weight:600;letter-spacing:-.02em;line-height:1.1}
+.op .kv .ch{font-size:12.5px;font-weight:600}
+.op .rd{font-size:14px;font-weight:600;margin:9px 0 1px}
+.op .rs{font-size:12px;color:var(--ink-2);margin:0;font-variant-numeric:tabular-nums}
+.op h4{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:500;margin:11px 0 5px;padding-top:9px;border-top:1px solid var(--grid)}
+.op ul{list-style:none;margin:0;padding:0;display:grid;gap:5px}
+.op li{font-size:12.5px;line-height:1.5;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.op li b{color:var(--ink);font-weight:600}
+.op .ob li{padding-left:13px;position:relative}
+.op .ob li::before{content:"";position:absolute;left:0;top:.62em;width:5px;height:5px;border-radius:50%;background:var(--axis)}
+.op li.maint{color:var(--muted);font-size:11.5px}
+.op .qs{font-size:11px;color:var(--muted);margin:6px 0 0}
+.op .hot{color:var(--pos-hi)} .op .cool{color:var(--neg-hi)} .op .fl{color:var(--muted)}
 </style>
 </head>
 <body>
@@ -296,6 +325,19 @@ table.live td.err{color:var(--muted);text-align:left;white-space:normal}
     <button class="ghost" id="themeBtn">Light</button>
   </div>
 </header>
+
+<section class="card op" id="onepager">
+  <div class="top">
+    <h2>At a glance</h2>
+    <div class="curve" id="opCurve"></div>
+    <span class="stamp" id="opStamp"></span>
+  </div>
+  <div class="blocks">
+    <div class="blk" id="opUS" style="--bc:var(--m-US)"></div>
+    <div class="blk" id="opUK" style="--bc:var(--m-UK)"></div>
+    <div class="blk" id="opOther" style="--bc:var(--axis)"></div>
+  </div>
+</section>
 
 <div class="filters" role="group" aria-label="Dashboard filters">
   <div class="fgroup"><span class="flabel">Markets</span><span id="mktChips"></span></div>
@@ -1534,7 +1576,246 @@ async function pollLive(){
     liveState.liveErr=String(e.message||e).slice(0,140);
     if(liveState.origin==='worker'){ liveState.payload=DATA.live||null; liveState.origin=DATA.live?'snapshot':null; }
   }
-  renderLive(); renderIntradaySummary();
+  renderLive(); renderIntradaySummary(); renderOnePager();
+}
+
+/* ------------------------------------------------ one-pager */
+/* The page on one screen: the US and UK reads as at each market's last official
+   close, what the delayed quotes say has happened since, and anything else
+   worth a look. Everything is computed here from the same series the grids
+   draw, so no figure in it can disagree with the tables below.
+
+   Colour is direction, not judgement: a yield rising is red and falling blue,
+   as everywhere on this page. The US 2s10s is the exception, by request:
+   falling (flattening) is red and rising blue. A gilt ETF is coloured by what
+   its price implies for yields, so a falling IGLT is red. */
+function dirCls(v, flat, invert){
+  if(v==null || Math.abs(v)<(flat==null?0.5:flat)) return 'fl';
+  return (v>0)!==!!invert? 'hot' : 'cool';
+}
+const sgnBp=(v,d)=> v==null? '–' : (v>0?'+':v<0?'−':'')+Math.abs(v).toFixed(d==null?1:d)+'bp';
+const sgnPc=(v,d)=> v==null? '–' : (v>0?'+':v<0?'−':'')+Math.abs(v).toFixed(d==null?2:d)+'%';
+const MKT_SHORT={US:'Treasury',UK:'Gilt',DE:'Bund',JP:'JGB'};
+const span=(cls,t)=>`<span class="${cls}">${t}</span>`;
+const shortDay=iso=>{ const t=new Date(iso+'T00:00:00Z');
+  return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][t.getUTCDay()]+' '+t.getUTCDate()+' '+MONTHS[t.getUTCMonth()]; };
+
+/* Mirrors _curve_shape() in write_commentary.py, on the same pair, so the word
+   here is the word in the written read below. Bear or bull is whichever leg
+   did the moving. */
+function curveShape(f, b){
+  if(f==null || b==null) return {k:'mixed', w:'Mixed move', c:'fl'};
+  const st=b-f;
+  if(Math.abs(st)<1.5){
+    if(f>0 && b>0) return {k:'parallel_up', w:'Near-parallel selloff', c:'hot'};
+    if(f<0 && b<0) return {k:'parallel_down', w:'Near-parallel rally', c:'cool'};
+    return {k:'parallel', w:'Flat session', c:'fl'};
+  }
+  if(st>0) return b>-f? {k:'bear_steepen', w:'Bear steepening', c:'hot'} : {k:'bull_steepen', w:'Bull steepening', c:'cool'};
+  return f>-b? {k:'bear_flatten', w:'Bear flattening', c:'hot'} : {k:'bull_flatten', w:'Bull flattening', c:'cool'};
+}
+function d1(m, t){ const c=changes(tenorSeries(m,t)); return {last:c.last, bp:c.ch['1d']? c.ch['1d'].bp : null}; }
+const lab=t=>t.replace('Y','y').replace('M','m');
+
+function liveItem(id){
+  const P=liveState.payload; if(!P) return null;
+  for(const g of P.groups||[]) for(const i of g.items) if(i.id===id) return i;
+  return null;
+}
+/* The move in a delayed quote since an official curve's date, on the quote's
+   own basis (Cboe ^TNX against its own close, not against the Treasury par
+   curve, which sits a few bp away). {same:true} when the quote is still the
+   session the read already covers. */
+function sinceRead(i, asof){
+  if(!i || i.error || i.level==null || !asof) return null;
+  if(i.session && i.session<=asof) return {same:true};
+  const R=i.recent;
+  let base=null, from=null, n=null;
+  if(R && R.dates && R.dates.length){
+    for(let j=R.dates.length-1;j>=0;j--) if(R.dates[j]<=asof){ base=R.closes[j]; from=R.dates[j]; n=R.dates.length-j; break; }
+  } else if(i.prev!=null && i.prevSession){ base=i.prev; from=i.prevSession; n=1; }   // a Worker not yet carrying `recent`: today's move, dated honestly
+  if(base==null) return null;
+  const v = i.kind==='yield'? (i.level-base)*100 : i.unit==='%'? (i.level/base-1)*100 : i.level-base;
+  return {v, from, n};
+}
+function sessionsWord(n){ return n===1? 'today\'s session' : n+' sessions'; }
+function quoteStamp(ids){
+  const P=liveState.payload; if(!P) return '';
+  const ts=ids.map(liveItem).filter(i=>i && !i.error && i.asof).map(i=>i.asof).sort();
+  if(!ts.length) return '';
+  return (liveState.origin==='worker'? 'Live' : 'Build snapshot')+' quotes to '+liveWhen(ts[ts.length-1])+' London, ~15 min delayed.';
+}
+
+function opCurve(){
+  const host=$('#opCurve'), m=byCode.US;
+  if(!m || !m.series['2Y'] || !m.series['10Y']){ host.innerHTML=span('fl','US 2s10s unavailable'); return; }
+  const {last,ch}=changes(spreadSeries(m,'2Y','10Y'));
+  if(!last){ host.innerHTML=span('fl','US 2s10s unavailable'); return; }
+  const lv=last.v*100, c1=ch['1d']? ch['1d'].bp : null;
+  const hz=['1d','5d','1m'].map(k=>{ const c=ch[k]; return c? span(dirCls(c.bp,0.5,true),sgnBp(c.bp))+' '+k : null; }).filter(Boolean);
+  host.innerHTML=`<span class="ml">US 2s10s</span>`+
+    `<span class="big ${dirCls(c1,0.5,true)}">${lv>0?'+':lv<0?'−':''}${Math.abs(lv).toFixed(0)}bp</span>`+
+    `<span class="ch">${hz.join(' · ')}</span>`+
+    `<span class="ch" style="color:var(--muted)">${lv<0?'inverted · ':''}Treasury close ${shortDay(last.d)}</span>`;
+}
+
+function opMarket(code, opts){
+  const host=$(opts.host), m=byCode[code];
+  host.innerHTML='';
+  host.appendChild(el('h3',null,`<span class="dot"></span>${opts.title}`));
+  if(!m){ host.appendChild(el('p','asof','No curve in this build.')); return; }
+  host.appendChild(el('p','asof',`Last read: close of ${shortDay(m.asof)} ${m.asof.slice(0,4)} · ${esc(opts.src)}`));
+  const t=d1(m,'10Y');
+  if(t.last){
+    host.appendChild(el('div','kv',`<span class="ml">10y</span>`+
+      `<span class="lvl ${dirCls(t.bp)}">${t.last.v.toFixed(2)}%</span>`+
+      `<span class="ch ${dirCls(t.bp)}">${sgnBp(t.bp)} on the session</span>`));
+  }
+  const [a,b]=m.key, fa=d1(m,a), fb=d1(m,b);
+  const sh=curveShape(fa.bp, fb.bp);
+  const sp=changes(spreadSeries(m,a,b));
+  host.appendChild(el('p','rd '+sh.c, sh.w));
+  host.appendChild(el('p','rs',`${spreadName(a,b)}`+
+    (sp.last? ` ${sgnBp(sp.last.v*100,0)}` : '')+` · session: `+
+    `${lab(a)} ${span(dirCls(fa.bp),sgnBp(fa.bp))}, ${lab(b)} ${span(dirCls(fb.bp),sgnBp(fb.bp))}`));
+
+  host.appendChild(el('h4',null,'Since the read'));
+  const ul=el('ul');
+  const lines=opts.since(m.asof);
+  if(!lines.length) ul.appendChild(el('li','fl', liveState.payload? 'No usable in-day quote; see the In-day market health panel.' : 'No in-day quotes in this build.'));
+  lines.forEach(h=>ul.appendChild(el('li',null,h)));
+  host.appendChild(ul);
+  const qs=quoteStamp(opts.ids);
+  if(qs) host.appendChild(el('p','qs',qs));
+}
+
+function usSince(asof){
+  const out=[];
+  const t10=liveItem('UST10Y'), s10=sinceRead(t10, asof);
+  if(s10 && s10.same) return ['No new US session since the read: the latest quotes are the session it covers.'];
+  if(s10){
+    out.push(`<b>10y (Cboe)</b> ${t10.level.toFixed(3)}% ${span(dirCls(s10.v),sgnBp(s10.v))} since the ${shortDay(s10.from)} close (${sessionsWord(s10.n)})`);
+  }
+  const f=sinceRead(liveItem('UST5Y'),asof), b=sinceRead(liveItem('UST30Y'),asof);
+  if(f && b && f.v!=null && b.v!=null){
+    const sh=curveShape(f.v, b.v);
+    out.push(`<b>Curve</b> ${span(sh.c, sh.w.toLowerCase())} since: 5y ${span(dirCls(f.v),sgnBp(f.v))}, 30y ${span(dirCls(b.v),sgnBp(b.v))}`);
+  }
+  const bills=sinceRead(liveItem('UST3M'),asof);
+  if(bills && bills.v!=null && Math.abs(bills.v)>=2)
+    out.push(`<b>3m bill</b> ${span(dirCls(bills.v),sgnBp(bills.v))}: the front end is repricing the Fed`);
+  return out;
+}
+function ukSince(asof){
+  const out=[];
+  const g=liveItem('IGLT'), sg=sinceRead(g, asof);
+  if(sg && sg.same) out.push('No new gilt session since the read: the latest quotes are the session it covers.');
+  else if(sg){
+    const word= Math.abs(sg.v)<0.05? 'gilts little changed' : sg.v>0? 'gilts firmer, yields lower' : 'gilts weaker, yields higher';
+    out.push(`<b>Gilt ETF (IGLT)</b> ${span(dirCls(sg.v,0.05,true),sgnPc(sg.v))} since the ${shortDay(sg.from)} close (${sessionsWord(sg.n)}): ${word}`);
+  }
+  const fx=liveItem('GBPUSD'), sf=sinceRead(fx, asof);
+  if(sf && !sf.same)
+    out.push(`<b>GBP/USD</b> ${fx.level.toFixed(4)} ${sgnPc(sf.v)} since: sterling ${Math.abs(sf.v)<0.1? 'steady' : sf.v>0? 'firmer' : 'weaker'}`);
+  const j=liveItem('SELLGB');
+  if(j && !j.error && (j.status==='amber' || j.status==='red'))
+    out.push(`<b class="hot">Gilts and sterling both down today</b> (${j.stress.toFixed(1)}σ): the UK credibility pattern; watch fiscal news and auctions`);
+  // Gilts take a lead from Treasuries; the US move over the same window is a cue when IGLT is quiet.
+  const t=sinceRead(liveItem('UST10Y'), asof);
+  if(t && !t.same && t.v!=null && Math.abs(t.v)>=3)
+    out.push(`<b>US 10y</b> ${span(dirCls(t.v),sgnBp(t.v))} over the same window: a global lead for gilts`);
+  return out;
+}
+
+function opOther(){
+  const host=$('#opOther'); host.innerHTML='';
+  host.appendChild(el('h3',null,'<span class="dot"></span>Other observations'));
+  host.appendChild(el('p','asof','Rule-picked from the curves, context series and in-day quotes'));
+  const notes=[], standing=[], maint=[];
+  const today=LON_D.format(new Date());
+
+  // 1. The in-day tone, then anything outside rates and gilts that is flagged.
+  const S=liveState.payload && liveState.payload.summary;
+  if(S && S.tone) notes.push(`<b>In-day:</b> ${esc(S.tone)}`);
+  if(S) (S.points||[]).filter(p=>!/^(UST|IGLT|GBPUSD|SELLGB)/.test(p.id)).slice(0,2)
+    .forEach(p=>notes.push(`<b>${esc(p.tag)}:</b> ${esc(p.text)} ${esc(p.implication||'')}`));
+
+  // 2. Long ends at the edge of their year.
+  const ext=[];
+  M.forEach(m=>['10Y','30Y'].forEach(t=>{
+    if(!m.series[t]) return;
+    const w=windowStats(tenorSeries(m,t),365); if(!w) return;
+    if(w.cur>=w.max || w.pct>=97) ext.push({m,t,w,hi:true, e:w.pct});
+    else if(w.cur<=w.min || w.pct<=3) ext.push({m,t,w,hi:false, e:100-w.pct});
+  }));
+  ext.sort((x,y)=>y.e-x.e).slice(0,3).forEach(x=>{
+    const at = x.hi? (x.w.cur>=x.w.max? 'at a 1-year high' : `in the ${ordinal(Math.round(x.w.pct))} percentile of its year`)
+                   : (x.w.cur<=x.w.min? 'at a 1-year low' : `in the ${ordinal(Math.round(x.w.pct))} percentile of its year`);
+    notes.push(`<b>${MKT_SHORT[x.m.code]||esc(x.m.name)} ${lab(x.t)}</b> ${span(x.hi?'hot':'cool',x.w.cur.toFixed(2)+'%')} is ${at}`);
+  });
+
+  // 3. The US 2s10s changing sign is worth a line of its own.
+  const us=byCode.US;
+  if(us && us.series['2Y'] && us.series['10Y']){
+    const s=spreadSeries(us,'2Y','10Y'), L=lastValid(s);
+    if(L){
+      let flip=null;
+      for(let i=L.i-1, k=0; i>=0 && k<5; i--){ if(s.vals[i]==null) continue; k++; if((s.vals[i]<0)!==(L.v<0)){ flip=s.dates[i]; break; } }
+      if(flip) notes.push(`<b>US 2s10s</b> has turned ${L.v<0? span('hot','negative: the curve has re-inverted') : span('cool','positive: the curve has dis-inverted')} within five sessions`);
+    }
+  }
+
+  // 4. Inflation compensation and gold, only when they moved.
+  const be=resolveRef('c.breakeven.10Y');
+  if(be){ const {last,ch}=changes(be.s); const c=ch['1d'];
+    if(last && c && Math.abs(c.bp)>=3) notes.push(`<b>US 10y breakeven</b> ${last.v.toFixed(2)}% ${span(dirCls(c.bp),sgnBp(c.bp))} on the session: inflation compensation ${c.bp>0?'rising':'falling'}`); }
+  const gd=resolveRef('c.gold.USD');
+  if(gd){ const {last,ch}=changes(gd.s); const w=windowStats(gd.s,365); const c=ch['1d'];
+    const pc=c? 100*(last.v/c.from-1) : null;
+    if(last && ((pc!=null && Math.abs(pc)>=1.5) || (w && w.cur>=w.max)))
+      notes.push(`<b>Gold</b> ${fmtLevel(last.v,'px','Gold USD')}${pc!=null? ' '+sgnPc(pc)+' on the day' : ''}${w && w.cur>=w.max? ', a 1-year high' : ''}`); }
+
+  // 5. Standing lines: the other two markets, the gilt-Treasury gap, front ends against policy.
+  const els=['DE','JP'].map(c=>byCode[c]).filter(Boolean).map(m=>{
+    const nm=(MKT_SHORT[m.code]||m.name)+'s';
+    const legs=['10Y','30Y'].map(t=>{ const x=d1(m,t); return x.last? `${lab(t)} ${x.last.v.toFixed(2)}% ${span(dirCls(x.bp),sgnBp(x.bp))}` : null; }).filter(Boolean);
+    return legs.length? `<b>${nm}</b> ${legs.join(', ')} (${shortDay(m.asof)})` : null;
+  }).filter(Boolean);
+  if(els.length) standing.push('Elsewhere: '+els.join(' · '));
+  if(byCode.UK && byCode.US){
+    const {last,ch}=changes(crossSeries(byCode.UK,byCode.US,'30Y'));
+    if(last){ const c=ch['1m'];
+      standing.push(`<b>Gilt 30y over Treasuries</b> ${sgnBp(last.v*100,0)}`+
+        (c? `, ${span(dirCls(c.bp,1),sgnBp(c.bp))} over the month` : '')+` (both traded ${shortDay(last.d)})`); }
+  }
+  const stale=[];
+  const fe=['US','UK'].map(c=>byCode[c]).filter(m=>m && m.policy && m.policy.rate!=null && m.series['2Y']).map(m=>{
+    const p=m.policy, L=lastValid(tenorSeries(m,'2Y')); if(!L) return null;
+    if(p.next && p.next<today) stale.push(`${m.code} (${esc(p.name)}, next decision ${shortDay(p.next)})`);
+    const gap=(L.v-p.rate)*100;
+    const what= gap<-10? 'pricing cuts' : gap>10? 'pricing hikes' : 'pricing a hold';
+    return `${m.code} 2y ${sgnBp(gap,0)} vs ${esc(p.name)} ${esc(p.display||'')} (${what})`;
+  }).filter(Boolean);
+  if(fe.length) standing.push('<b>Front ends vs policy:</b> '+fe.join(' · ')+(stale.length? ' — policy rates may be stale' : ''));
+  if(stale.length) maint.push(`policy_rates.json has not been updated since a scheduled decision: ${stale.join(', ')}. Refresh it so the policy gaps are current.`);
+  (DATA.context_errors||[]).forEach(e=>maint.push(`${esc(e.series)} unavailable in this build.`));
+
+  const ul=el('ul','ob');
+  const all=notes.slice(0,4).concat(standing);
+  if(!notes.length) ul.appendChild(el('li',null,'Nothing unusual flagged: no long end at a 1-year extreme and no outsized move in breakevens or gold.'));
+  all.forEach(h=>ul.appendChild(el('li',null,h)));
+  maint.forEach(h=>ul.appendChild(el('li','maint',h)));
+  host.appendChild(ul);
+}
+
+function renderOnePager(){
+  opCurve();
+  opMarket('US', {host:'#opUS', title:'US view', src:'US Treasury par curve', ids:['UST3M','UST5Y','UST10Y','UST30Y'], since:usSince});
+  opMarket('UK', {host:'#opUK', title:'UK view', src:'BoE GLC curve, published a session behind', ids:['IGLT','GBPUSD','UST10Y'], since:ukSince});
+  opOther();
+  const P=liveState.payload;
+  $('#opStamp').textContent = 'Reads at each market\'s last official close; "since" from delayed quotes' +
+    (P? '' : ' (none in this build)');
 }
 
 /* ------------------------------------------------ orchestration */
@@ -1560,7 +1841,7 @@ function renderAll(){
   buildRamp();
   renderFreshness();
   renderHistoryNote();
-  renderIntradaySummary(); renderBrief(); renderLive(); buildTiles();
+  renderOnePager(); renderIntradaySummary(); renderBrief(); renderLive(); buildTiles();
   renderYieldGrid(); renderSpreadGrid(); renderCrossGrid(); renderCtxGrid();
   renderScaleKey(); renderCross(); renderSpreadHistory(); renderCurves(); renderTableView(); renderFooter();
 }

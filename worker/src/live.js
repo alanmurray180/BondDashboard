@@ -25,6 +25,7 @@
 export const LOOKBACK = 60;          // sessions of daily moves behind each sigma
 export const AMBER = 1;
 export const RED = 2;
+const RECENT = 10;                   // completed closes carried for "since the read"
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
@@ -234,10 +235,16 @@ function score(it, s) {
     if (pct >= 90) stress = Math.max(stress ?? 0, RED);
     else if (pct >= 75) stress = Math.max(stress ?? 0, AMBER);
   }
-  const level = it.kind === "yield" ? yld(s.price) : it.kind === "spread" ? s.price * 100 : s.price;
+  const unitOf = (v) => (it.kind === "yield" ? yld(v) : it.kind === "spread" ? v * 100 : v);
+  const level = unitOf(s.price);
+  // The last few completed closes, in the same units as level, so the page can
+  // measure the move since an official curve's date rather than only since
+  // the last session: the BoE file routinely runs a session or two behind.
+  const tail = Math.max(0, n - RECENT);
+  const recent = { dates: s.dates.slice(tail), closes: s.closes.slice(tail).map(unitOf) };
   return {
-    level, prev: it.kind === "yield" ? yld(prev) : it.kind === "spread" ? prev * 100 : prev,
-    move, sigma, z, stress, pct, prevMove, prevZ,
+    level, prev: unitOf(prev),
+    move, sigma, z, stress, pct, prevMove, prevZ, recent,
     unit: it.kind === "yield" || it.kind === "spread" ? "bp" : it.kind === "level" ? "pt" : "%",
     asof: new Date(s.time * 1000).toISOString(),
     session: s.today, prevSession: s.dates[n - 1],
@@ -467,7 +474,7 @@ export function summarise(groups) {
   divs.forEach(({ i, d }) => add(i, d.tag, d.phrase));
   // Then anything unusual or on watch that is simply continuing.
   [...red, ...amber].sort((a, b) => b.stress - a.stress).forEach((i) => add(i, i.status === "red" ? "Unusual" : "Watch", ""));
-  return { headline, points: points.slice(0, 6), more: Math.max(0, points.length - 6) };
+  return { headline, tone, points: points.slice(0, 6), more: Math.max(0, points.length - 6) };
 }
 
 /** Fetch every symbol in parallel and assemble. */

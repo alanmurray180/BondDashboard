@@ -101,6 +101,23 @@ own sigmas, and calls out reversals, breakouts after a quiet session,
 accelerations and calming, then anything unusual or on watch, each with a
 one-line implication. Treasury tenors doing the same thing are told as one line.
 
+The **At a glance** block at the very top is the page on one screen, computed
+in the page from the same series the grids draw. The US 2s10s sits in its top
+row (red when it fell on the session, blue when it rose: the reverse of the
+yield colours, by design). The US and UK views give each market's last official
+read: its date, the 10y (red rising, blue falling) and the session's curve
+shape on the market's key pair — the same rule as `_curve_shape()` in
+`write_commentary.py`, so the word matches the written read. Under "Since the
+read" the delayed quotes are measured from the close on that market's curve
+date, on the quote's own basis: `live.js` carries each indicator's last ten
+closes as `recent` for this, because the BoE curve is often a session or two
+behind and today's move alone would understate what gilts have done since.
+Other observations are rule-picked: the in-day tone, flagged non-rates
+indicators, long ends at a 1-year extreme, a 2s10s sign change, outsized
+breakeven or gold moves, then Bunds and JGBs, the gilt–Treasury 30y gap and
+front ends against policy. A policy rate whose next scheduled decision has
+passed is called out, since `policy_rates.json` is maintained by hand.
+
 ETF moves are total return: the previous close is Yahoo's dividend-adjusted
 one, or HYG would book its monthly ex-dividend drop as a credit selloff.
 

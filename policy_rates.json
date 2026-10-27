@@ -1,22 +1,22 @@
 {
   "US": {
     "name": "Fed funds target",
-    "rate": 3.625,
-    "display": "3.50–3.75%",
-    "asof": "2026-07-29",
-    "note": "Held 29 Jul 2026; three dissents preferred a 25bp hike (Hammack, Kashkari, Logan).",
-    "next": "2026-09-16",
-    "cpi": 2.9,
+    "rate": 3.875,
+    "display": "3.75–4.00%",
+    "asof": "2026-09-16",
+    "note": "Raised 25bp on 16 Sep 2026, unanimous — the first hike since 2023. Minutes: most participants saw another hike as likely appropriate by year end.",
+    "next": "2026-10-28",
+    "cpi": 3.7,
     "cpi_label": "US CPI y/y"
   },
   "UK": {
     "name": "Bank Rate",
     "rate": 3.75,
     "display": "3.75%",
-    "asof": "2026-07-30",
-    "note": "Held 30 Jul 2026. CPI 2.6%, expected to rise on energy.",
-    "next": "2026-09-17",
-    "cpi": 2.6,
+    "asof": "2026-09-17",
+    "note": "Held 17 Sep 2026 by 6–3; Greene, Mann and Pill voted for 4.00%. CPI 3.5% in September, risks judged to the upside.",
+    "next": "2026-11-05",
+    "cpi": 3.5,
     "cpi_label": "UK CPI y/y"
   },
   "DE": {

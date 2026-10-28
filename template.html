@@ -1586,7 +1586,7 @@ async function pollLive(){
    draw, so no figure in it can disagree with the tables below.
 
    Colour is direction, not judgement: a yield rising is red and falling blue,
-   as everywhere on this page. The US 2s10s is the exception, by request:
+   as everywhere on this page. The US 3m10s is the exception, by request:
    falling (flattening) is red and rising blue. A gilt ETF is coloured by what
    its price implies for yields, so a falling IGLT is red. */
 function dirCls(v, flat, invert){
@@ -1648,12 +1648,12 @@ function quoteStamp(ids){
 
 function opCurve(){
   const host=$('#opCurve'), m=byCode.US;
-  if(!m || !m.series['2Y'] || !m.series['10Y']){ host.innerHTML=span('fl','US 2s10s unavailable'); return; }
-  const {last,ch}=changes(spreadSeries(m,'2Y','10Y'));
-  if(!last){ host.innerHTML=span('fl','US 2s10s unavailable'); return; }
+  if(!m || !m.series['3M'] || !m.series['10Y']){ host.innerHTML=span('fl','US 3m10s unavailable'); return; }
+  const {last,ch}=changes(spreadSeries(m,'3M','10Y'));
+  if(!last){ host.innerHTML=span('fl','US 3m10s unavailable'); return; }
   const lv=last.v*100, c1=ch['1d']? ch['1d'].bp : null;
   const hz=['1d','5d','1m'].map(k=>{ const c=ch[k]; return c? span(dirCls(c.bp,0.5,true),sgnBp(c.bp))+' '+k : null; }).filter(Boolean);
-  host.innerHTML=`<span class="ml">US 2s10s</span>`+
+  host.innerHTML=`<span class="ml">US 3m10s</span>`+
     `<span class="big ${dirCls(c1,0.5,true)}">${lv>0?'+':lv<0?'−':''}${Math.abs(lv).toFixed(0)}bp</span>`+
     `<span class="ch">${hz.join(' · ')}</span>`+
     `<span class="ch" style="color:var(--muted)">${lv<0?'inverted · ':''}Treasury close ${shortDay(last.d)}</span>`;
@@ -1754,14 +1754,14 @@ function opOther(){
     notes.push(`<b>${MKT_SHORT[x.m.code]||esc(x.m.name)} ${lab(x.t)}</b> ${span(x.hi?'hot':'cool',x.w.cur.toFixed(2)+'%')} is ${at}`);
   });
 
-  // 3. The US 2s10s changing sign is worth a line of its own.
+  // 3. The US 3m10s changing sign is worth a line of its own.
   const us=byCode.US;
-  if(us && us.series['2Y'] && us.series['10Y']){
-    const s=spreadSeries(us,'2Y','10Y'), L=lastValid(s);
+  if(us && us.series['3M'] && us.series['10Y']){
+    const s=spreadSeries(us,'3M','10Y'), L=lastValid(s);
     if(L){
       let flip=null;
       for(let i=L.i-1, k=0; i>=0 && k<5; i--){ if(s.vals[i]==null) continue; k++; if((s.vals[i]<0)!==(L.v<0)){ flip=s.dates[i]; break; } }
-      if(flip) notes.push(`<b>US 2s10s</b> has turned ${L.v<0? span('hot','negative: the curve has re-inverted') : span('cool','positive: the curve has dis-inverted')} within five sessions`);
+      if(flip) notes.push(`<b>US 3m10s</b> has turned ${L.v<0? span('hot','negative: the curve has re-inverted') : span('cool','positive: the curve has dis-inverted')} within five sessions`);
     }
   }
 

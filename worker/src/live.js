@@ -86,8 +86,11 @@ export const GROUPS = [
     key: "uk", title: "Gilts and sterling",
     note: "Gilts falling with sterling falling is the credibility pattern (Sept 2022); gilts falling with sterling rising is a hawkish or growth story.",
     items: [
+      // Effective duration from BlackRock's product page, refreshed by hand: it
+      // drifts slowly (7.18 on 31 Jul, 6.99 on 20 Oct 2026) as the index rolls.
+      // The page uses it to turn the ETF's move into an estimated yield move.
       { id: "IGLT", label: "Gilt ETF", sym: "IGLT.L", kind: "price", stress: "abs",
-        what: "iShares Core UK Gilts, total return" },
+        what: "iShares Core UK Gilts, total return", duration: 6.99, durationAsof: "2026-10-20" },
       { id: "GBPUSD", label: "GBP/USD", sym: "GBPUSD=X", kind: "price", stress: "abs" },
       { id: "SELLGB", label: "Gilts and sterling both down", kind: "joint", of: ["IGLT", "GBPUSD"],
         what: "geometric mean of the two falls, in sigmas; zero unless both fell" },
@@ -274,6 +277,7 @@ export function assemble(charts, source, now = new Date()) {
     const byId = {};
     const items = g.items.map((it) => {
       const base = { id: it.id, kind: it.kind, label: it.label, what: it.what || it.sym || "", stressDir: it.stress || "down" };
+      if (it.duration) Object.assign(base, { duration: it.duration, durationAsof: it.durationAsof });
       try {
         let r;
         if (it.kind === "joint") {

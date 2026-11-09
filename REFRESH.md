@@ -112,6 +112,11 @@ read" the delayed quotes are measured from the close on that market's curve
 date, on the quote's own basis: `live.js` carries each indicator's last ten
 closes as `recent` for this, because the BoE curve is often a session or two
 behind and today's move alone would understate what gilts have done since.
+The gilt ETF's move is also given as an estimated yield move: the price change
+over IGLT's effective duration (`duration` on the item in `live.js`, from
+BlackRock's product page). It is a duration-weighted parallel shift, not the
+10y, and the duration needs refreshing by hand every few months; the page says
+so once the figure is more than 120 days old.
 Other observations are rule-picked: the in-day tone, flagged non-rates
 indicators, long ends at a 1-year extreme, a 3m10s sign change, outsized
 breakeven or gold moves, then Bunds and JGBs, the gilt–Treasury 30y gap and

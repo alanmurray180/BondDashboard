@@ -3,9 +3,9 @@
     "name": "Fed funds target",
     "rate": 3.875,
     "display": "3.75–4.00%",
-    "asof": "2026-09-16",
-    "note": "Raised 25bp on 16 Sep 2026, unanimous — the first hike since 2023. Minutes: most participants saw another hike as likely appropriate by year end.",
-    "next": "2026-10-28",
+    "asof": "2026-10-28",
+    "note": "Held 28 Oct 2026 by 10–2; Cook and Hammack voted for a 25bp hike. Raised 25bp on 16 Sep, the first hike since 2023.",
+    "next": "2026-12-09",
     "cpi": 3.7,
     "cpi_label": "US CPI y/y"
   },

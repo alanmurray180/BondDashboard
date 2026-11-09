@@ -1713,6 +1713,14 @@ function ukSince(asof){
   else if(sg){
     const word= Math.abs(sg.v)<0.05? 'gilts little changed' : sg.v>0? 'gilts firmer, yields lower' : 'gilts weaker, yields higher';
     out.push(`<b>Gilt ETF (IGLT)</b> ${span(dirCls(sg.v,0.05,true),sgnPc(sg.v))} since the ${shortDay(sg.from)} close (${sessionsWord(sg.n)}): ${word}`);
+    // Price move over effective duration: dP/P ≈ −D·dy. Convexity and a few days'
+    // accrual are well under a basis point at these sizes; what the estimate
+    // cannot see is shape, so it is a duration-weighted shift, not the 10y itself.
+    if(g.duration){
+      const bp=-sg.v/g.duration*100, t10=byCode.UK && lastValid(tenorSeries(byCode.UK,'10Y'));
+      out.push(`<b>≈ ${span(dirCls(bp),sgnBp(bp))}</b> in gilt yields, at IGLT's ${g.duration.toFixed(2)} effective duration`+
+        (t10? `: the 10y at ≈ ${span(dirCls(bp),(t10.v+bp/100).toFixed(2)+'%')} if the move were parallel` : ''));
+    }
   }
   const fx=liveItem('GBPUSD'), sf=sinceRead(fx, asof);
   if(sf && !sf.same)
@@ -1797,6 +1805,9 @@ function opOther(){
     return `${m.code} 2y ${sgnBp(gap,0)} vs ${esc(p.name)} ${esc(p.display||'')} (${what})`;
   }).filter(Boolean);
   if(fe.length) standing.push('<b>Front ends vs policy:</b> '+fe.join(' · ')+(stale.length? ' — policy rates may be stale' : ''));
+  const ig=liveItem('IGLT');
+  if(ig && ig.durationAsof && daysBetween(ig.durationAsof, today)>120)
+    maint.push(`IGLT's effective duration (${ig.duration}) dates from ${shortDay(ig.durationAsof)}; refresh it in worker/src/live.js so the gilt bp estimate stays calibrated.`);
   if(stale.length) maint.push(`policy_rates.json has not been updated since a scheduled decision: ${stale.join(', ')}. Refresh it so the policy gaps are current.`);
   (DATA.context_errors||[]).forEach(e=>maint.push(`${esc(e.series)} unavailable in this build.`));
 
